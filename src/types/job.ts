@@ -1,0 +1,9 @@
+export const JOB_STATUSES = ["관심", "준비 중", "지원 완료", "서류 합격", "면접", "최종 합격", "불합격"] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+export const PROCESS_STEPS = ["지원 준비", "서류 심사", "코딩테스트", "인적성", "AI 역량검사", "1차 면접", "2차 면접", "처우 협의", "최종 합격", "불합격"] as const;
+export type ProcessStep = (typeof PROCESS_STEPS)[number];
+export const ASSESSMENT_TYPES = ["코딩테스트", "인적성", "AI 역량검사"] as const;
+export type AssessmentType = (typeof ASSESSMENT_TYPES)[number];
+export type JobTask = { id: string; label: string; done: boolean };
+export type Job = { id: string; company: string; role: string; deadline: string; status: JobStatus; currentStep: ProcessStep; assessments: AssessmentType[]; link: string; memo: string; tasks: JobTask[]; createdAt: string };
+export type JobDraft = Pick<Job, "company" | "role" | "deadline" | "currentStep" | "assessments" | "link">;
