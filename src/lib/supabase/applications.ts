@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   AssessmentType,
   Job,
+  JobDraft,
   JobStatus,
   ProcessStep,
 } from "@/types/job";
@@ -27,6 +28,53 @@ type ApplicationRow = {
   created_at: string;
   application_tasks: ApplicationTaskRow[] | null;
 };
+
+type ApplicationChanges = Partial<
+  Pick<
+    Job,
+    | "company"
+    | "role"
+    | "deadline"
+    | "status"
+    | "currentStep"
+    | "assessments"
+    | "link"
+    | "memo"
+  >
+>;
+
+const applicationColumns = `
+  id,
+  company,
+  role,
+  deadline,
+  status,
+  current_step,
+  assessments,
+  link,
+  memo,
+  created_at
+`;
+
+function toJob(row: ApplicationRow): Job {
+  return {
+    id: row.id,
+    company: row.company,
+    role: row.role,
+    deadline: row.deadline,
+    status: row.status,
+    currentStep: row.current_step,
+    assessments: row.assessments ?? [],
+    link: row.link,
+    memo: row.memo,
+    tasks: (row.application_tasks ?? []).map((task) => ({
+      id: task.id,
+      label: task.label,
+      done: task.done,
+    })),
+    createdAt: row.created_at,
+  };
+}
 
 export async function loadApplications(supabase: SupabaseClient): Promise<Job[]> {
   const { data, error } = await supabase
@@ -61,21 +109,73 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
     throw new Error(error.message);
   }
 
-  return ((data ?? []) as ApplicationRow[]).map((row) => ({
-    id: row.id,
-    company: row.company,
-    role: row.role,
-    deadline: row.deadline,
-    status: row.status,
-    currentStep: row.current_step,
-    assessments: row.assessments ?? [],
-    link: row.link,
-    memo: row.memo,
-    tasks: (row.application_tasks ?? []).map((task) => ({
-      id: task.id,
-      label: task.label,
-      done: task.done,
-    })),
-    createdAt: row.created_at,
-  }));
+  return ((data ?? []) as ApplicationRow[]).map(toJob);
+}
+
+export async function createApplication(
+  supabase: SupabaseClient,
+  draft: JobDraft,
+): Promise<Job> {
+  const { data, error } = await supabase
+    .from("applications")
+    .insert({
+      company: draft.company,
+      role: draft.role,
+      deadline: draft.deadline,
+      status: "준비 중",
+      current_step: draft.currentStep,
+      assessments: draft.assessments,
+      link: draft.link,
+      memo: "",
+    })
+    .select(applicationColumns)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return toJob({
+    ...(data as Omit<ApplicationRow, "application_tasks">),
+    application_tasks: [],
+  });
+}
+
+export async function updateApplication(
+  supabase: SupabaseClient,
+  id: string,
+  changes: ApplicationChanges,
+): Promise<void> {
+  const payload: Record<string, unknown> = {};
+
+  if (changes.company !== undefined) payload.company = changes.company;
+  if (changes.role !== undefined) payload.role = changes.role;
+  if (changes.deadline !== undefined) payload.deadline = changes.deadline;
+  if (changes.status !== undefined) payload.status = changes.status;
+  if (changes.currentStep !== undefined) payload.current_step = changes.currentStep;
+  if (changes.assessments !== undefined) payload.assessments = changes.assessments;
+  if (changes.link !== undefined) payload.link = changes.link;
+  if (changes.memo !== undefined) payload.memo = changes.memo;
+
+  if (!Object.keys(payload).length) return;
+
+  const { error } = await supabase
+    .from("applications")
+    .update(payload)
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function deleteApplication(
+  supabase: SupabaseClient,
+  id: string,
+): Promise<void> {
+  const { error } = await supabase.from("applications").delete().eq("id", id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }

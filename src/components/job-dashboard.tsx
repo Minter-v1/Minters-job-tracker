@@ -1,10 +1,15 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { logout } from "@/app/auth/actions";
 import { CloseIcon, ExternalIcon, PlusIcon, SearchIcon, TrashIcon } from "@/components/icons";
 import { RichTextEditor } from "@/components/rich-text-editor";
-import { loadApplications } from "@/lib/supabase/applications";
+import {
+  createApplication,
+  deleteApplication,
+  loadApplications,
+  updateApplication,
+} from "@/lib/supabase/applications";
 import { createClient } from "@/lib/supabase/client";
 import { ASSESSMENT_TYPES, AssessmentType, Job, JobDraft, PROCESS_STEPS, ProcessStep } from "@/types/job";
 
@@ -28,6 +33,8 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [pendingWrites, setPendingWrites] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
   const [filter, setFilter] = useState<Filter>("전체");
   const [query, setQuery] = useState("");
@@ -35,6 +42,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<JobDraft>(emptyDraft);
   const [newTask, setNewTask] = useState("");
+  const memoTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +67,12 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
       cancelled = true;
     };
   }, [reloadKey]);
+
+  useEffect(() => {
+    const timers = memoTimers.current;
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  }, []);
+
   const selected = jobs.find((job) => job.id === selectedId) ?? null;
   const stats = useMemo(() => ({ urgent: jobs.filter((j) => dayDiff(j.deadline) >= 0 && dayDiff(j.deadline) <= 3).length, tests: jobs.filter((j) => ["코딩테스트", "인적성", "AI 역량검사"].includes(j.currentStep)).length, interviews: jobs.filter((j) => j.currentStep.includes("면접")).length, total: jobs.filter((j) => !["최종 합격", "불합격"].includes(j.currentStep)).length }), [jobs]);
   const visible = useMemo(() => [...jobs].filter((job) => {
@@ -70,9 +84,75 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     return true;
   }).sort((a, b) => a.deadline.localeCompare(b.deadline)), [filter, jobs, query]);
 
-  function updateJob(id: string, changes: Partial<Job>) { setJobs((items) => items.map((job) => job.id === id ? { ...job, ...changes } : job)); }
-  function addJob(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const job: Job = { ...draft, id: crypto.randomUUID(), status: "준비 중", memo: "", tasks: [{ id: crypto.randomUUID(), label: "이력서 확인", done: false }, { id: crypto.randomUUID(), label: "지원서 제출", done: false }], createdAt: new Date().toISOString() }; setJobs((items) => [job, ...items]); setDraft(emptyDraft); setIsAddOpen(false); setSelectedId(job.id); }
-  function deleteJob(id: string) { if (confirm("이 지원 정보를 삭제할까요?")) { setJobs((items) => items.filter((job) => job.id !== id)); setSelectedId(null); } }
+  async function runWrite<T>(work: () => Promise<T>): Promise<T | null> {
+    setPendingWrites((count) => count + 1);
+    setSaveError("");
+
+    try {
+      return await work();
+    } catch {
+      setSaveError("변경사항을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      return null;
+    } finally {
+      setPendingWrites((count) => Math.max(0, count - 1));
+    }
+  }
+
+  function persistApplication(id: string, changes: Partial<Job>) {
+    const applicationChanges = { ...changes };
+    delete applicationChanges.tasks;
+    if (!Object.keys(applicationChanges).length) return;
+
+    void runWrite(() => updateApplication(createClient(), id, applicationChanges));
+  }
+
+  function updateJob(id: string, changes: Partial<Job>) {
+    setJobs((items) => items.map((job) => job.id === id ? { ...job, ...changes } : job));
+
+    if (changes.memo !== undefined) {
+      const existingTimer = memoTimers.current.get(id);
+      if (existingTimer) clearTimeout(existingTimer);
+
+      const timer = setTimeout(() => {
+        memoTimers.current.delete(id);
+        persistApplication(id, { memo: changes.memo });
+      }, 700);
+      memoTimers.current.set(id, timer);
+      return;
+    }
+
+    persistApplication(id, changes);
+  }
+
+  async function addJob(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const job = await runWrite(() => createApplication(createClient(), draft));
+    if (!job) return;
+
+    setJobs((items) => [job, ...items]);
+    setDraft(emptyDraft);
+    setIsAddOpen(false);
+    setSelectedId(job.id);
+  }
+
+  async function deleteJob(id: string) {
+    if (!confirm("이 지원 정보를 삭제할까요?")) return;
+
+    const timer = memoTimers.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      memoTimers.current.delete(id);
+    }
+
+    const deleted = await runWrite(async () => {
+      await deleteApplication(createClient(), id);
+      return true;
+    });
+    if (!deleted) return;
+
+    setJobs((items) => items.filter((job) => job.id !== id));
+    setSelectedId(null);
+  }
   function addTask(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selected || !newTask.trim()) return; updateJob(selected.id, { tasks: [...selected.tasks, { id: crypto.randomUUID(), label: newTask.trim(), done: false }] }); setNewTask(""); }
   if (!loaded) return <DashboardLoading />;
 
@@ -92,7 +172,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white"><div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-8"><div className="flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-[10px] bg-cyan-500 text-sm font-black text-white shadow-sm">A</div><span className="text-[15px] font-bold tracking-[-0.025em]">지원관리</span></div><div className="flex items-center gap-2"><div className="mr-1 hidden text-right lg:block"><p className="text-[9px] font-bold uppercase tracking-[.08em] text-slate-400">Signed in</p><p className="max-w-48 truncate text-xs font-semibold text-slate-600">{userEmail}</p></div><form action={logout}><button type="submit" className="outline-button h-10 px-3">로그아웃</button></form><button onClick={() => setIsAddOpen(true)} className="solid-button"><PlusIcon className="size-4" /><span className="hidden sm:inline">지원 추가</span></button></div></div></header>
 
     <main className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10">
-      <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-0.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">마감 일정과 채용 전형을 한곳에서 관리하세요.</p></div><p className="text-xs text-slate-400">Supabase에서 사용자별로 불러옴</p></div>
+      <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-0.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">마감 일정과 채용 전형을 한곳에서 관리하세요.</p></div><p className={`text-xs ${saveError ? "text-rose-500" : "text-slate-400"}`}>{saveError || (pendingWrites > 0 ? "Supabase에 저장 중..." : "Supabase에 저장됨")}</p></div>
 
       <section className="mb-5 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4">{[["진행 중",stats.total],["3일 내 마감",stats.urgent],["검사 진행",stats.tests],["면접 단계",stats.interviews]].map(([label,value], index) => <div key={String(label)} className="flex items-baseline gap-2"><p className="text-xs font-medium text-slate-500">{label}</p><p className={`text-lg font-bold ${index === 1 && Number(value) > 0 ? "text-rose-500" : "text-slate-900"}`}>{value}</p></div>)}</section>
 
@@ -102,7 +182,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
         {visible.length ? <div className="divide-y divide-slate-100">{visible.map((job) => <JobRow key={job.id} job={job} onSelect={() => setSelectedId(job.id)} onStepChange={(step) => updateJob(job.id, { currentStep: step })} />)}</div> : <div className="px-6 py-20 text-center"><p className="font-bold">{jobs.length ? "해당하는 지원이 없습니다." : "아직 등록한 지원이 없습니다."}</p><p className="mt-2 text-sm text-slate-400">{jobs.length ? "검색어나 필터를 바꿔보세요." : "지원 추가 버튼으로 첫 기업을 등록해 보세요."}</p></div>}
       </section>
     </main>
-    {isAddOpen && <AddModal draft={draft} setDraft={setDraft} onClose={() => setIsAddOpen(false)} onSubmit={addJob} />}
+    {isAddOpen && <AddModal draft={draft} setDraft={setDraft} onClose={() => setIsAddOpen(false)} onSubmit={addJob} isSaving={pendingWrites > 0} />}
     {selected && <Detail job={selected} onClose={() => setSelectedId(null)} onUpdate={(changes) => updateJob(selected.id, changes)} onDelete={() => deleteJob(selected.id)} newTask={newTask} setNewTask={setNewTask} onAddTask={addTask} />}
   </div>;
 }
@@ -136,8 +216,8 @@ function AssessmentPicker({ value, onChange }: { value: AssessmentType[]; onChan
   return <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">{ASSESSMENT_TYPES.map((type) => { const active = value.includes(type); return <label key={type} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-3 text-xs font-semibold transition ${active ? "border-cyan-500 bg-cyan-50 text-cyan-800 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`}><input type="checkbox" className="sr-only" checked={active} onChange={() => onChange(active ? value.filter((item) => item !== type) : [...value, type])}/><span className={`flex size-4 items-center justify-center rounded-md border text-[10px] ${active ? "border-cyan-500 bg-cyan-500 text-white" : "border-slate-300"}`}>{active ? "✓" : ""}</span>{type}</label>; })}</div>;
 }
 
-function AddModal({ draft, setDraft, onClose, onSubmit }: { draft: JobDraft; setDraft: React.Dispatch<React.SetStateAction<JobDraft>>; onClose: () => void; onSubmit: (e: FormEvent<HTMLFormElement>) => void }) {
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[24px] bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,.16)] sm:max-w-2xl sm:rounded-[24px] sm:p-8"><div className="mb-7 flex justify-between"><div><h2 className="text-2xl font-bold tracking-[-.04em]">지원 정보 등록</h2><p className="mt-1 text-sm text-slate-400">기업과 전형 정보를 입력하세요.</p></div><button onClick={onClose} className="square-button" aria-label="닫기"><CloseIcon className="size-5"/></button></div><form onSubmit={onSubmit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><Field label="기업명"><input required autoFocus value={draft.company} onChange={(e) => setDraft({...draft, company:e.target.value})} className="plain-field" placeholder="예: 네이버"/></Field><Field label="직무명"><input required value={draft.role} onChange={(e) => setDraft({...draft, role:e.target.value})} className="plain-field" placeholder="예: Backend Engineer"/></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="마감일"><input required type="date" value={draft.deadline} onChange={(e) => setDraft({...draft, deadline:e.target.value})} className="plain-field"/></Field><Field label="현재 단계"><select value={draft.currentStep} onChange={(e) => setDraft({...draft, currentStep:e.target.value as ProcessStep})} className="plain-field">{PROCESS_STEPS.map((step)=><option key={step}>{step}</option>)}</select></Field></div><Field label="포함된 전형 (복수 선택 가능)"><AssessmentPicker value={draft.assessments} onChange={(assessments)=>setDraft({...draft, assessments})}/></Field><Field label="공고 링크" optional><input type="url" value={draft.link} onChange={(e)=>setDraft({...draft,link:e.target.value})} className="plain-field" placeholder="https://"/></Field><div className="flex justify-end gap-2 border-t border-slate-100 pt-5"><button type="button" onClick={onClose} className="outline-button">취소</button><button className="solid-button">등록하기</button></div></form></div></div>;
+function AddModal({ draft, setDraft, onClose, onSubmit, isSaving }: { draft: JobDraft; setDraft: React.Dispatch<React.SetStateAction<JobDraft>>; onClose: () => void; onSubmit: (e: FormEvent<HTMLFormElement>) => void; isSaving: boolean }) {
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && !isSaving && onClose()}><div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[24px] bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,.16)] sm:max-w-2xl sm:rounded-[24px] sm:p-8"><div className="mb-7 flex justify-between"><div><h2 className="text-2xl font-bold tracking-[-.04em]">지원 정보 등록</h2><p className="mt-1 text-sm text-slate-400">기업과 전형 정보를 입력하세요.</p></div><button type="button" onClick={onClose} disabled={isSaving} className="square-button disabled:cursor-not-allowed disabled:opacity-50" aria-label="닫기"><CloseIcon className="size-5"/></button></div><form onSubmit={onSubmit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><Field label="기업명"><input required autoFocus value={draft.company} onChange={(e) => setDraft({...draft, company:e.target.value})} className="plain-field" placeholder="예: 네이버"/></Field><Field label="직무명"><input required value={draft.role} onChange={(e) => setDraft({...draft, role:e.target.value})} className="plain-field" placeholder="예: Backend Engineer"/></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="마감일"><input required type="date" value={draft.deadline} onChange={(e) => setDraft({...draft, deadline:e.target.value})} className="plain-field"/></Field><Field label="현재 단계"><select value={draft.currentStep} onChange={(e) => setDraft({...draft, currentStep:e.target.value as ProcessStep})} className="plain-field">{PROCESS_STEPS.map((step)=><option key={step}>{step}</option>)}</select></Field></div><Field label="포함된 전형 (복수 선택 가능)"><AssessmentPicker value={draft.assessments} onChange={(assessments)=>setDraft({...draft, assessments})}/></Field><Field label="공고 링크" optional><input type="url" value={draft.link} onChange={(e)=>setDraft({...draft,link:e.target.value})} className="plain-field" placeholder="https://"/></Field><div className="flex justify-end gap-2 border-t border-slate-100 pt-5"><button type="button" onClick={onClose} disabled={isSaving} className="outline-button disabled:cursor-not-allowed disabled:opacity-50">취소</button><button disabled={isSaving} className="solid-button disabled:cursor-not-allowed disabled:opacity-60">{isSaving ? "저장 중..." : "등록하기"}</button></div></form></div></div>;
 }
 
 function Detail({ job, onClose, onUpdate, onDelete, newTask, setNewTask, onAddTask }: { job: Job; onClose:()=>void; onUpdate:(c:Partial<Job>)=>void; onDelete:()=>void; newTask:string; setNewTask:(v:string)=>void; onAddTask:(e:FormEvent<HTMLFormElement>)=>void }) {
