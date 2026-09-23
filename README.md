@@ -168,28 +168,44 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
 
 </details>
 
-## 데이터 구조
+## 데이터베이스 스키마
 
-<details>
-<summary><strong>지원 정보 모델 보기</strong></summary>
+```mermaid
+erDiagram
+    AUTH_USERS ||--o{ APPLICATIONS : owns
+    APPLICATIONS ||--o{ APPLICATION_TASKS : contains
 
-```ts
-type Job = {
-  id: string;
-  company: string;
-  role: string;
-  deadline: string;
-  status: JobStatus;
-  currentStep: ProcessStep;
-  assessments: AssessmentType[];
-  link: string;
-  memo: string;
-  tasks: JobTask[];
-  createdAt: string;
-};
+    AUTH_USERS {
+        uuid id PK
+    }
+
+    APPLICATIONS {
+        uuid id PK
+        uuid user_id FK
+        text company
+        text role
+        date deadline
+        text status
+        text current_step
+        text_array assessments
+        text link
+        text memo
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    APPLICATION_TASKS {
+        uuid id PK
+        uuid application_id FK
+        text label
+        boolean done
+        integer position
+        timestamptz created_at
+        timestamptz updated_at
+    }
 ```
 
-</details>
+`AUTH_USERS`는 Supabase가 관리하는 `auth.users`입니다. 사용자 삭제 시 지원 정보가, 지원 정보 삭제 시 연결된 체크리스트가 함께 삭제되도록 구성했습니다. 전체 DDL과 RLS 정책은 [schema.sql](./docs/supabase/schema.sql)에서 확인할 수 있습니다.
 
 ---
 
