@@ -67,8 +67,14 @@ create policy "Users manage their own applications"
   on public.applications
   for all
   to authenticated
-  using ((select auth.uid()) = user_id)
-  with check ((select auth.uid()) = user_id);
+  using (
+    (select auth.uid()) is not null
+    and (select auth.uid()) = user_id
+  )
+  with check (
+    (select auth.uid()) is not null
+    and (select auth.uid()) = user_id
+  );
 
 drop policy if exists "Users manage tasks for their own applications" on public.application_tasks;
 create policy "Users manage tasks for their own applications"
@@ -76,7 +82,8 @@ create policy "Users manage tasks for their own applications"
   for all
   to authenticated
   using (
-    exists (
+    (select auth.uid()) is not null
+    and exists (
       select 1
       from public.applications
       where applications.id = application_tasks.application_id
@@ -84,7 +91,8 @@ create policy "Users manage tasks for their own applications"
     )
   )
   with check (
-    exists (
+    (select auth.uid()) is not null
+    and exists (
       select 1
       from public.applications
       where applications.id = application_tasks.application_id
