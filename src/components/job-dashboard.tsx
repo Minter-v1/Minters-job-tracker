@@ -2,12 +2,12 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { logout } from "@/app/auth/actions";
-import { createSampleJobs } from "@/data/sample-jobs";
 import { CloseIcon, ExternalIcon, PlusIcon, SearchIcon, TrashIcon } from "@/components/icons";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { loadApplications } from "@/lib/supabase/applications";
+import { createClient } from "@/lib/supabase/client";
 import { ASSESSMENT_TYPES, AssessmentType, Job, JobDraft, PROCESS_STEPS, ProcessStep } from "@/types/job";
 
-const STORAGE_KEY = "applylog-jobs-v1";
 const emptyDraft: JobDraft = { company: "", role: "", deadline: "", currentStep: "지원 준비", assessments: [], link: "" };
 type Filter = "전체" | "마감 임박" | "지원 준비" | "전형 진행" | "면접";
 const filters: Filter[] = ["전체", "마감 임박", "지원 준비", "전형 진행", "면접"];
@@ -27,6 +27,8 @@ function progress(step: ProcessStep) { const index = PROCESS_STEPS.indexOf(step)
 export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [filter, setFilter] = useState<Filter>("전체");
   const [query, setQuery] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -34,8 +36,29 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [draft, setDraft] = useState<JobDraft>(emptyDraft);
   const [newTask, setNewTask] = useState("");
 
-  useEffect(() => { const timer = window.setTimeout(() => { const saved = localStorage.getItem(STORAGE_KEY); setJobs((saved ? JSON.parse(saved) : createSampleJobs()).map(normalizeJob)); setLoaded(true); }, 0); return () => clearTimeout(timer); }, []);
-  useEffect(() => { if (loaded) localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs)); }, [jobs, loaded]);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadJobs() {
+      setLoaded(false);
+      setLoadError("");
+
+      try {
+        const rows = await loadApplications(createClient());
+        if (!cancelled) setJobs(rows.map(normalizeJob));
+      } catch {
+        if (!cancelled) setLoadError("지원 정보를 불러오지 못했습니다.");
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    }
+
+    void loadJobs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
   const selected = jobs.find((job) => job.id === selectedId) ?? null;
   const stats = useMemo(() => ({ urgent: jobs.filter((j) => dayDiff(j.deadline) >= 0 && dayDiff(j.deadline) <= 3).length, tests: jobs.filter((j) => ["코딩테스트", "인적성", "AI 역량검사"].includes(j.currentStep)).length, interviews: jobs.filter((j) => j.currentStep.includes("면접")).length, total: jobs.filter((j) => !["최종 합격", "불합격"].includes(j.currentStep)).length }), [jobs]);
   const visible = useMemo(() => [...jobs].filter((job) => {
@@ -51,25 +74,51 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   function addJob(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const job: Job = { ...draft, id: crypto.randomUUID(), status: "준비 중", memo: "", tasks: [{ id: crypto.randomUUID(), label: "이력서 확인", done: false }, { id: crypto.randomUUID(), label: "지원서 제출", done: false }], createdAt: new Date().toISOString() }; setJobs((items) => [job, ...items]); setDraft(emptyDraft); setIsAddOpen(false); setSelectedId(job.id); }
   function deleteJob(id: string) { if (confirm("이 지원 정보를 삭제할까요?")) { setJobs((items) => items.filter((job) => job.id !== id)); setSelectedId(null); } }
   function addTask(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selected || !newTask.trim()) return; updateJob(selected.id, { tasks: [...selected.tasks, { id: crypto.randomUUID(), label: newTask.trim(), done: false }] }); setNewTask(""); }
-  if (!loaded) return <div className="min-h-screen bg-[#f6f7f9]" />;
+  if (!loaded) return <DashboardLoading />;
+
+  if (loadError) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-[#f6f7f9] px-5">
+        <div className="w-full max-w-md border border-slate-200 bg-white p-7 text-center">
+          <p className="text-sm font-bold text-slate-900">{loadError}</p>
+          <p className="mt-2 text-xs leading-5 text-slate-500">네트워크 연결과 Supabase 정책을 확인한 뒤 다시 시도해 주세요.</p>
+          <button type="button" onClick={() => setReloadKey((value) => value + 1)} className="solid-button mt-5">다시 시도</button>
+        </div>
+      </div>
+    );
+  }
 
   return <div className="min-h-screen bg-[#f6f7f9] text-slate-900">
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white"><div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-8"><div className="flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-[10px] bg-cyan-500 text-sm font-black text-white shadow-sm">A</div><span className="text-[15px] font-bold tracking-[-0.025em]">지원관리</span></div><div className="flex items-center gap-2"><div className="mr-1 hidden text-right lg:block"><p className="text-[9px] font-bold uppercase tracking-[.08em] text-slate-400">Signed in</p><p className="max-w-48 truncate text-xs font-semibold text-slate-600">{userEmail}</p></div><form action={logout}><button type="submit" className="outline-button h-10 px-3">로그아웃</button></form><button onClick={() => setIsAddOpen(true)} className="solid-button"><PlusIcon className="size-4" /><span className="hidden sm:inline">지원 추가</span></button></div></div></header>
 
     <main className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10">
-      <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-0.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">마감 일정과 채용 전형을 한곳에서 관리하세요.</p></div><p className="text-xs text-slate-400">이 브라우저에 자동 저장됨</p></div>
+      <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-0.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">마감 일정과 채용 전형을 한곳에서 관리하세요.</p></div><p className="text-xs text-slate-400">Supabase에서 사용자별로 불러옴</p></div>
 
       <section className="mb-5 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4">{[["진행 중",stats.total],["3일 내 마감",stats.urgent],["검사 진행",stats.tests],["면접 단계",stats.interviews]].map(([label,value], index) => <div key={String(label)} className="flex items-baseline gap-2"><p className="text-xs font-medium text-slate-500">{label}</p><p className={`text-lg font-bold ${index === 1 && Number(value) > 0 ? "text-rose-500" : "text-slate-900"}`}>{value}</p></div>)}</section>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-col gap-3 border-b border-slate-200 p-3 md:flex-row md:items-center md:justify-between"><div className="flex gap-1 overflow-x-auto">{filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${filter === item ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>{item}</button>)}</div><label className="relative md:w-72"><span className="sr-only">검색</span><SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400"/><input value={query} onChange={(e) => setQuery(e.target.value)} className="plain-field h-10 pl-9" placeholder="기업명 또는 직무 검색" /></label></div>
         <div className="hidden grid-cols-[minmax(190px,1.25fr)_140px_minmax(230px,1.4fr)_100px_110px_28px] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-[10px] font-bold tracking-[.05em] text-slate-400 md:grid"><span>기업 / 직무</span><span>현재 단계</span><span>전형 방식</span><span>마감</span><span>준비율</span><span /></div>
-        {visible.length ? <div className="divide-y divide-slate-100">{visible.map((job) => <JobRow key={job.id} job={job} onSelect={() => setSelectedId(job.id)} onStepChange={(step) => updateJob(job.id, { currentStep: step })} />)}</div> : <div className="px-6 py-20 text-center"><p className="font-bold">해당하는 지원이 없습니다.</p><p className="mt-2 text-sm text-slate-400">검색어나 필터를 바꿔보세요.</p></div>}
+        {visible.length ? <div className="divide-y divide-slate-100">{visible.map((job) => <JobRow key={job.id} job={job} onSelect={() => setSelectedId(job.id)} onStepChange={(step) => updateJob(job.id, { currentStep: step })} />)}</div> : <div className="px-6 py-20 text-center"><p className="font-bold">{jobs.length ? "해당하는 지원이 없습니다." : "아직 등록한 지원이 없습니다."}</p><p className="mt-2 text-sm text-slate-400">{jobs.length ? "검색어나 필터를 바꿔보세요." : "지원 추가 버튼으로 첫 기업을 등록해 보세요."}</p></div>}
       </section>
     </main>
     {isAddOpen && <AddModal draft={draft} setDraft={setDraft} onClose={() => setIsAddOpen(false)} onSubmit={addJob} />}
     {selected && <Detail job={selected} onClose={() => setSelectedId(null)} onUpdate={(changes) => updateJob(selected.id, changes)} onDelete={() => deleteJob(selected.id)} newTask={newTask} setNewTask={setNewTask} onAddTask={addTask} />}
   </div>;
+}
+
+function DashboardLoading() {
+  return (
+    <div className="min-h-screen bg-[#f6f7f9] text-slate-900">
+      <div className="h-16 border-b border-slate-200 bg-white" />
+      <main className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10">
+        <div className="h-8 w-40 animate-pulse rounded-lg bg-slate-200" />
+        <div className="mt-3 h-4 w-72 max-w-full animate-pulse rounded bg-slate-200" />
+        <div className="mt-8 h-16 animate-pulse rounded-xl border border-slate-200 bg-white" />
+        <div className="mt-5 h-72 animate-pulse rounded-xl border border-slate-200 bg-white" />
+      </main>
+    </div>
+  );
 }
 
 function JobRow({ job, onSelect, onStepChange }: { job: Job; onSelect: () => void; onStepChange: (step: ProcessStep) => void }) {
