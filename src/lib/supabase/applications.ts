@@ -5,6 +5,7 @@ import type {
   Job,
   JobDraft,
   JobStatus,
+  JobTask,
   ProcessStep,
 } from "@/types/job";
 
@@ -67,12 +68,16 @@ function toJob(row: ApplicationRow): Job {
     assessments: row.assessments ?? [],
     link: row.link,
     memo: row.memo,
-    tasks: (row.application_tasks ?? []).map((task) => ({
-      id: task.id,
-      label: task.label,
-      done: task.done,
-    })),
+    tasks: (row.application_tasks ?? []).map(toJobTask),
     createdAt: row.created_at,
+  };
+}
+
+function toJobTask(row: ApplicationTaskRow): JobTask {
+  return {
+    id: row.id,
+    label: row.label,
+    done: row.done,
   };
 }
 
@@ -174,6 +179,69 @@ export async function deleteApplication(
   id: string,
 ): Promise<void> {
   const { error } = await supabase.from("applications").delete().eq("id", id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function createApplicationTask(
+  supabase: SupabaseClient,
+  applicationId: string,
+  label: string,
+): Promise<JobTask> {
+  const { data: lastTasks, error: positionError } = await supabase
+    .from("application_tasks")
+    .select("position")
+    .eq("application_id", applicationId)
+    .order("position", { ascending: false })
+    .limit(1);
+
+  if (positionError) {
+    throw new Error(positionError.message);
+  }
+
+  const position = (lastTasks?.[0]?.position ?? -1) + 1;
+  const { data, error } = await supabase
+    .from("application_tasks")
+    .insert({
+      application_id: applicationId,
+      label: label.trim(),
+      position,
+    })
+    .select("id, label, done, position")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return toJobTask(data as ApplicationTaskRow);
+}
+
+export async function updateApplicationTask(
+  supabase: SupabaseClient,
+  taskId: string,
+  done: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from("application_tasks")
+    .update({ done })
+    .eq("id", taskId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function deleteApplicationTask(
+  supabase: SupabaseClient,
+  taskId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("application_tasks")
+    .delete()
+    .eq("id", taskId);
 
   if (error) {
     throw new Error(error.message);

@@ -6,9 +6,12 @@ import { CloseIcon, ExternalIcon, PlusIcon, SearchIcon, TrashIcon } from "@/comp
 import { RichTextEditor } from "@/components/rich-text-editor";
 import {
   createApplication,
+  createApplicationTask,
   deleteApplication,
+  deleteApplicationTask,
   loadApplications,
   updateApplication,
+  updateApplicationTask,
 } from "@/lib/supabase/applications";
 import { createClient } from "@/lib/supabase/client";
 import { ASSESSMENT_TYPES, AssessmentType, Job, JobDraft, PROCESS_STEPS, ProcessStep } from "@/types/job";
@@ -153,7 +156,48 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     setJobs((items) => items.filter((job) => job.id !== id));
     setSelectedId(null);
   }
-  function addTask(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selected || !newTask.trim()) return; updateJob(selected.id, { tasks: [...selected.tasks, { id: crypto.randomUUID(), label: newTask.trim(), done: false }] }); setNewTask(""); }
+  async function addTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !newTask.trim()) return;
+
+    const task = await runWrite(() => createApplicationTask(
+      createClient(),
+      selected.id,
+      newTask,
+    ));
+    if (!task) return;
+
+    updateJob(selected.id, { tasks: [...selected.tasks, task] });
+    setNewTask("");
+  }
+
+  async function toggleTask(taskId: string, done: boolean) {
+    if (!selected) return;
+
+    const updated = await runWrite(async () => {
+      await updateApplicationTask(createClient(), taskId, done);
+      return true;
+    });
+    if (!updated) return;
+
+    updateJob(selected.id, {
+      tasks: selected.tasks.map((task) => task.id === taskId ? { ...task, done } : task),
+    });
+  }
+
+  async function deleteTask(taskId: string) {
+    if (!selected) return;
+
+    const deleted = await runWrite(async () => {
+      await deleteApplicationTask(createClient(), taskId);
+      return true;
+    });
+    if (!deleted) return;
+
+    updateJob(selected.id, {
+      tasks: selected.tasks.filter((task) => task.id !== taskId),
+    });
+  }
   if (!loaded) return <DashboardLoading />;
 
   if (loadError) {
@@ -183,7 +227,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
       </section>
     </main>
     {isAddOpen && <AddModal draft={draft} setDraft={setDraft} onClose={() => setIsAddOpen(false)} onSubmit={addJob} isSaving={pendingWrites > 0} />}
-    {selected && <Detail job={selected} onClose={() => setSelectedId(null)} onUpdate={(changes) => updateJob(selected.id, changes)} onDelete={() => deleteJob(selected.id)} newTask={newTask} setNewTask={setNewTask} onAddTask={addTask} />}
+    {selected && <Detail job={selected} onClose={() => setSelectedId(null)} onUpdate={(changes) => updateJob(selected.id, changes)} onDelete={() => deleteJob(selected.id)} newTask={newTask} setNewTask={setNewTask} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} isSaving={pendingWrites > 0} />}
   </div>;
 }
 
@@ -220,14 +264,14 @@ function AddModal({ draft, setDraft, onClose, onSubmit, isSaving }: { draft: Job
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && !isSaving && onClose()}><div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[24px] bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,.16)] sm:max-w-2xl sm:rounded-[24px] sm:p-8"><div className="mb-7 flex justify-between"><div><h2 className="text-2xl font-bold tracking-[-.04em]">지원 정보 등록</h2><p className="mt-1 text-sm text-slate-400">기업과 전형 정보를 입력하세요.</p></div><button type="button" onClick={onClose} disabled={isSaving} className="square-button disabled:cursor-not-allowed disabled:opacity-50" aria-label="닫기"><CloseIcon className="size-5"/></button></div><form onSubmit={onSubmit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><Field label="기업명"><input required autoFocus value={draft.company} onChange={(e) => setDraft({...draft, company:e.target.value})} className="plain-field" placeholder="예: 네이버"/></Field><Field label="직무명"><input required value={draft.role} onChange={(e) => setDraft({...draft, role:e.target.value})} className="plain-field" placeholder="예: Backend Engineer"/></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="마감일"><input required type="date" value={draft.deadline} onChange={(e) => setDraft({...draft, deadline:e.target.value})} className="plain-field"/></Field><Field label="현재 단계"><select value={draft.currentStep} onChange={(e) => setDraft({...draft, currentStep:e.target.value as ProcessStep})} className="plain-field">{PROCESS_STEPS.map((step)=><option key={step}>{step}</option>)}</select></Field></div><Field label="포함된 전형 (복수 선택 가능)"><AssessmentPicker value={draft.assessments} onChange={(assessments)=>setDraft({...draft, assessments})}/></Field><Field label="공고 링크" optional><input type="url" value={draft.link} onChange={(e)=>setDraft({...draft,link:e.target.value})} className="plain-field" placeholder="https://"/></Field><div className="flex justify-end gap-2 border-t border-slate-100 pt-5"><button type="button" onClick={onClose} disabled={isSaving} className="outline-button disabled:cursor-not-allowed disabled:opacity-50">취소</button><button disabled={isSaving} className="solid-button disabled:cursor-not-allowed disabled:opacity-60">{isSaving ? "저장 중..." : "등록하기"}</button></div></form></div></div>;
 }
 
-function Detail({ job, onClose, onUpdate, onDelete, newTask, setNewTask, onAddTask }: { job: Job; onClose:()=>void; onUpdate:(c:Partial<Job>)=>void; onDelete:()=>void; newTask:string; setNewTask:(v:string)=>void; onAddTask:(e:FormEvent<HTMLFormElement>)=>void }) {
+function Detail({ job, onClose, onUpdate, onDelete, newTask, setNewTask, onAddTask, onToggleTask, onDeleteTask, isSaving }: { job: Job; onClose:()=>void; onUpdate:(c:Partial<Job>)=>void; onDelete:()=>void; newTask:string; setNewTask:(v:string)=>void; onAddTask:(e:FormEvent<HTMLFormElement>)=>void; onToggleTask:(taskId:string, done:boolean)=>void; onDeleteTask:(taskId:string)=>void; isSaving:boolean }) {
   return <div className="fixed inset-0 z-40 bg-black/15" onMouseDown={(e)=>e.target===e.currentTarget&&onClose()}><aside className="absolute inset-y-2 right-2 w-[calc(100%-16px)] overflow-y-auto rounded-[24px] bg-white shadow-[0_20px_70px_rgba(15,23,42,.18)] sm:inset-y-3 sm:right-3 sm:max-w-[520px]"><div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4 sm:px-7"><p className="text-sm font-bold">지원 상세</p><button onClick={onClose} className="square-button" aria-label="닫기"><CloseIcon className="size-5"/></button></div><div className="p-5 sm:p-7">
     <div className="mb-7 flex gap-4"><div className="flex size-12 items-center justify-center rounded-2xl bg-cyan-50 text-xs font-bold text-cyan-700">{initials(job.company)}</div><div><h2 className="text-2xl font-bold tracking-[-.04em]">{job.company}</h2><p className="mt-1 text-sm text-slate-400">{job.role}</p></div></div>
     <div className="mb-7 grid grid-cols-2 gap-3"><div className="rounded-2xl bg-slate-50 p-4"><p className="mini-label">마감일</p><p className={`mt-1 text-xl font-bold ${dayDiff(job.deadline)<=3?"text-rose-500":""}`}>{dday(job.deadline)}</p><p className="text-xs text-slate-400">{formatDate(job.deadline)}</p></div><div className="rounded-2xl bg-cyan-50 p-4"><p className="mini-label">전체 과정</p><p className="mt-1 text-xl font-bold text-cyan-700">{progress(job.currentStep)}%</p><p className="text-xs text-cyan-600/60">현재 단계 기준</p></div></div>
     <Field label="현재 단계"><select value={job.currentStep} onChange={(e)=>onUpdate({currentStep:e.target.value as ProcessStep})} className="plain-field mb-6">{PROCESS_STEPS.map((step)=><option key={step}>{step}</option>)}</select></Field>
     <Field label="포함된 전형"><AssessmentPicker value={job.assessments} onChange={(assessments)=>onUpdate({assessments})}/></Field>
     {job.link&&<a href={job.link} target="_blank" rel="noreferrer" className="my-7 flex items-center justify-between rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100"><span>채용공고 열기</span><ExternalIcon className="size-4"/></a>}
-    <section className="my-7"><div className="mb-3 flex justify-between"><h3 className="text-sm font-bold">준비 체크리스트</h3><span className="text-xs font-semibold text-slate-400">{job.tasks.filter((t)=>t.done).length}/{job.tasks.length}</span></div><div className="space-y-2">{job.tasks.map((task)=><label key={task.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3.5 py-3 hover:bg-slate-50"><input type="checkbox" checked={task.done} onChange={()=>onUpdate({tasks:job.tasks.map((t)=>t.id===task.id?{...t,done:!t.done}:t)})} className="size-4 accent-cyan-500"/><span className={`flex-1 text-sm ${task.done?"text-slate-300 line-through":""}`}>{task.label}</span><button type="button" onClick={(e)=>{e.preventDefault();onUpdate({tasks:job.tasks.filter((t)=>t.id!==task.id)})}}><CloseIcon className="size-4 text-slate-300"/></button></label>)}</div><form onSubmit={onAddTask} className="mt-2 flex gap-2"><input value={newTask} onChange={(e)=>setNewTask(e.target.value)} className="plain-field" placeholder="할 일 추가"/><button className="outline-button px-3"><PlusIcon className="size-4"/></button></form></section>
+    <section className="my-7"><div className="mb-3 flex justify-between"><h3 className="text-sm font-bold">준비 체크리스트</h3><span className="text-xs font-semibold text-slate-400">{job.tasks.filter((t)=>t.done).length}/{job.tasks.length}</span></div><div className="space-y-2">{job.tasks.length ? job.tasks.map((task)=><div key={task.id} className="flex items-center gap-3 rounded-xl border border-slate-200 px-3.5 py-3 hover:bg-slate-50"><input type="checkbox" checked={task.done} disabled={isSaving} onChange={()=>onToggleTask(task.id,!task.done)} className="size-4 cursor-pointer accent-cyan-500 disabled:cursor-wait"/><span className={`flex-1 text-sm ${task.done?"text-slate-300 line-through":""}`}>{task.label}</span><button type="button" disabled={isSaving} onClick={()=>onDeleteTask(task.id)} className="rounded-md p-1 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-40" aria-label={`${task.label} 삭제`}><CloseIcon className="size-4 text-slate-300"/></button></div>) : <p className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">아직 등록한 할 일이 없습니다.</p>}</div><form onSubmit={onAddTask} className="mt-2 flex gap-2"><input value={newTask} onChange={(e)=>setNewTask(e.target.value)} disabled={isSaving} className="plain-field disabled:cursor-wait disabled:bg-slate-50" placeholder="할 일 추가"/><button disabled={isSaving || !newTask.trim()} className="outline-button px-3 disabled:cursor-not-allowed disabled:opacity-40" aria-label="할 일 추가"><PlusIcon className="size-4"/></button></form></section>
     <section className="mb-8"><p className="mb-2 text-xs font-bold">메모</p><RichTextEditor key={job.id} value={job.memo} onChange={(memo)=>onUpdate({memo})}/></section><button onClick={onDelete} className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-rose-500"><TrashIcon className="size-4"/>지원 정보 삭제</button>
   </div></aside></div>;
 }
