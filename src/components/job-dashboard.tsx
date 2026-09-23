@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { logout } from "@/app/auth/actions";
 import { createSampleJobs } from "@/data/sample-jobs";
 import { CloseIcon, ExternalIcon, PlusIcon, SearchIcon, TrashIcon } from "@/components/icons";
 import { RichTextEditor } from "@/components/rich-text-editor";
@@ -23,7 +24,7 @@ function normalizeJob(job: Job): Job {
 }
 function progress(step: ProcessStep) { const index = PROCESS_STEPS.indexOf(step); return step === "불합격" ? 100 : Math.round(((index + 1) / (PROCESS_STEPS.length - 1)) * 100); }
 
-export function JobDashboard() {
+export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<Filter>("전체");
@@ -53,7 +54,7 @@ export function JobDashboard() {
   if (!loaded) return <div className="min-h-screen bg-[#f6f7f9]" />;
 
   return <div className="min-h-screen bg-[#f6f7f9] text-slate-900">
-    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white"><div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-8"><div className="flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-[10px] bg-cyan-500 text-sm font-black text-white shadow-sm">A</div><span className="text-[15px] font-bold tracking-[-0.025em]">지원관리</span></div><button onClick={() => setIsAddOpen(true)} className="solid-button"><PlusIcon className="size-4" />지원 추가</button></div></header>
+    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white"><div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-8"><div className="flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-[10px] bg-cyan-500 text-sm font-black text-white shadow-sm">A</div><span className="text-[15px] font-bold tracking-[-0.025em]">지원관리</span></div><div className="flex items-center gap-2"><div className="mr-1 hidden text-right lg:block"><p className="text-[9px] font-bold uppercase tracking-[.08em] text-slate-400">Signed in</p><p className="max-w-48 truncate text-xs font-semibold text-slate-600">{userEmail}</p></div><form action={logout}><button type="submit" className="outline-button h-10 px-3">로그아웃</button></form><button onClick={() => setIsAddOpen(true)} className="solid-button"><PlusIcon className="size-4" /><span className="hidden sm:inline">지원 추가</span></button></div></div></header>
 
     <main className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10">
       <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-0.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">마감 일정과 채용 전형을 한곳에서 관리하세요.</p></div><p className="text-xs text-slate-400">이 브라우저에 자동 저장됨</p></div>
