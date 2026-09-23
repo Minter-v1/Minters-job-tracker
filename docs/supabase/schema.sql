@@ -3,6 +3,29 @@
 
 create schema if not exists private;
 
+create or replace function private.are_assessments_valid(
+  assessment_values text[]
+)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select
+    cardinality(assessment_values) <= 10
+    and coalesce(
+      (
+        select bool_and(
+          assessment is not null
+          and assessment = btrim(assessment)
+          and char_length(assessment) between 1 and 40
+        )
+        from unnest(assessment_values) as assessment
+      ),
+      true
+    );
+$$;
+
 create table if not exists public.user_roles (
   user_id uuid primary key references auth.users (id) on delete cascade,
   role text not null default 'user' check (role in ('admin', 'user')),
@@ -37,9 +60,9 @@ create table if not exists public.applications (
   status text not null default '준비 중'
     check (status in ('관심', '준비 중', '지원 완료', '서류 합격', '면접', '최종 합격', '불합격')),
   current_step text not null default '지원 준비'
-    check (current_step in ('지원 준비', '서류 심사', '코딩테스트', '인적성', 'AI 역량검사', '1차 면접', '2차 면접', '처우 협의', '최종 합격', '불합격')),
+    check (current_step = btrim(current_step) and char_length(current_step) between 1 and 40),
   assessments text[] not null default '{}'
-    check (assessments <@ array['코딩테스트', '인적성', 'AI 역량검사']::text[]),
+    check (private.are_assessments_valid(assessments)),
   link text not null default '',
   memo text not null default '',
   created_at timestamptz not null default now(),
@@ -56,6 +79,17 @@ create table if not exists public.application_tasks (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.application_stages (
+  id uuid primary key default gen_random_uuid(),
+  application_id uuid not null references public.applications (id) on delete cascade,
+  title text not null check (title = btrim(title) and char_length(title) between 1 and 40),
+  scheduled_date date,
+  completed boolean not null default false,
+  position integer not null default 0 check (position >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists applications_user_deadline_idx
   on public.applications (user_id, deadline);
 
@@ -64,6 +98,13 @@ create index if not exists applications_user_step_idx
 
 create index if not exists application_tasks_application_position_idx
   on public.application_tasks (application_id, position);
+
+create index if not exists application_stages_application_position_idx
+  on public.application_stages (application_id, position);
+
+create index if not exists application_stages_scheduled_date_idx
+  on public.application_stages (scheduled_date)
+  where scheduled_date is not null;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -120,24 +161,34 @@ create trigger application_tasks_set_updated_at
   before update on public.application_tasks
   for each row execute function public.set_updated_at();
 
+drop trigger if exists application_stages_set_updated_at on public.application_stages;
+create trigger application_stages_set_updated_at
+  before update on public.application_stages
+  for each row execute function public.set_updated_at();
+
 revoke all on function private.is_admin() from public;
+revoke all on function private.are_assessments_valid(text[]) from public;
 grant usage on schema private to authenticated;
 grant execute on function private.is_admin() to authenticated;
+grant execute on function private.are_assessments_valid(text[]) to authenticated;
 
 alter table public.user_roles enable row level security;
 alter table public.access_requests enable row level security;
 alter table public.applications enable row level security;
 alter table public.application_tasks enable row level security;
+alter table public.application_stages enable row level security;
 
 revoke all on public.user_roles from anon;
 revoke all on public.access_requests from anon;
 revoke all on public.applications from anon;
 revoke all on public.application_tasks from anon;
+revoke all on public.application_stages from anon;
 
 grant select on public.user_roles to authenticated;
 grant select, update on public.access_requests to authenticated;
 grant select, insert, update, delete on public.applications to authenticated;
 grant select, insert, update, delete on public.application_tasks to authenticated;
+grant select, insert, update, delete on public.application_stages to authenticated;
 
 drop policy if exists "Users read their own role" on public.user_roles;
 create policy "Users read their own role"
@@ -198,6 +249,30 @@ create policy "Users manage tasks for their own applications"
       select 1
       from public.applications
       where applications.id = application_tasks.application_id
+        and applications.user_id = (select auth.uid())
+    )
+  );
+
+drop policy if exists "Users manage stages for their own applications" on public.application_stages;
+create policy "Users manage stages for their own applications"
+  on public.application_stages
+  for all
+  to authenticated
+  using (
+    (select auth.uid()) is not null
+    and exists (
+      select 1
+      from public.applications
+      where applications.id = application_stages.application_id
+        and applications.user_id = (select auth.uid())
+    )
+  )
+  with check (
+    (select auth.uid()) is not null
+    and exists (
+      select 1
+      from public.applications
+      where applications.id = application_stages.application_id
         and applications.user_id = (select auth.uid())
     )
   );

@@ -4,6 +4,7 @@ import type {
   AssessmentType,
   Job,
   JobDraft,
+  JobStage,
   JobStatus,
   JobTask,
   ProcessStep,
@@ -13,6 +14,14 @@ type ApplicationTaskRow = {
   id: string;
   label: string;
   done: boolean;
+  position: number;
+};
+
+type ApplicationStageRow = {
+  id: string;
+  title: string;
+  scheduled_date: string | null;
+  completed: boolean;
   position: number;
 };
 
@@ -28,6 +37,7 @@ type ApplicationRow = {
   memo: string;
   created_at: string;
   application_tasks: ApplicationTaskRow[] | null;
+  application_stages: ApplicationStageRow[] | null;
 };
 
 type ApplicationChanges = Partial<
@@ -69,7 +79,18 @@ function toJob(row: ApplicationRow): Job {
     link: row.link,
     memo: row.memo,
     tasks: (row.application_tasks ?? []).map(toJobTask),
+    stages: (row.application_stages ?? []).map(toJobStage),
     createdAt: row.created_at,
+  };
+}
+
+function toJobStage(row: ApplicationStageRow): JobStage {
+  return {
+    id: row.id,
+    title: row.title,
+    scheduledDate: row.scheduled_date,
+    completed: row.completed,
+    position: row.position,
   };
 }
 
@@ -101,12 +122,23 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
           label,
           done,
           position
+        ),
+        application_stages (
+          id,
+          title,
+          scheduled_date,
+          completed,
+          position
         )
       `,
     )
     .order("deadline", { ascending: true })
     .order("position", {
       referencedTable: "application_tasks",
+      ascending: true,
+    })
+    .order("position", {
+      referencedTable: "application_stages",
       ascending: true,
     });
 
@@ -143,6 +175,7 @@ export async function createApplication(
   return toJob({
     ...(data as Omit<ApplicationRow, "application_tasks">),
     application_tasks: [],
+    application_stages: [],
   });
 }
 
@@ -246,4 +279,55 @@ export async function deleteApplicationTask(
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export async function createApplicationStage(
+  supabase: SupabaseClient,
+  applicationId: string,
+  title: string,
+): Promise<JobStage> {
+  const { data: lastStages, error: positionError } = await supabase
+    .from("application_stages")
+    .select("position")
+    .eq("application_id", applicationId)
+    .order("position", { ascending: false })
+    .limit(1);
+
+  if (positionError) throw new Error(positionError.message);
+
+  const { data, error } = await supabase
+    .from("application_stages")
+    .insert({
+      application_id: applicationId,
+      title: title.trim(),
+      position: (lastStages?.[0]?.position ?? -1) + 1,
+    })
+    .select("id, title, scheduled_date, completed, position")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return toJobStage(data as ApplicationStageRow);
+}
+
+export async function updateApplicationStage(
+  supabase: SupabaseClient,
+  stageId: string,
+  changes: Partial<Pick<JobStage, "title" | "scheduledDate" | "completed" | "position">>,
+): Promise<void> {
+  const payload: Record<string, unknown> = {};
+  if (changes.title !== undefined) payload.title = changes.title.trim();
+  if (changes.scheduledDate !== undefined) payload.scheduled_date = changes.scheduledDate || null;
+  if (changes.completed !== undefined) payload.completed = changes.completed;
+  if (changes.position !== undefined) payload.position = changes.position;
+
+  const { error } = await supabase.from("application_stages").update(payload).eq("id", stageId);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteApplicationStage(
+  supabase: SupabaseClient,
+  stageId: string,
+): Promise<void> {
+  const { error } = await supabase.from("application_stages").delete().eq("id", stageId);
+  if (error) throw new Error(error.message);
 }
