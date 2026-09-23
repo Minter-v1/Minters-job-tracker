@@ -292,8 +292,28 @@ await supabaseAdmin.auth.admin.inviteUserByEmail(request.email, {
 
 ### 사용자 데이터 격리
 
-1. 테스트 계정 A로 지원 정보 한 건을 생성합니다.
-2. 테스트 계정 B로 로그인합니다.
+#### SQL로 정책 검증
+
+1. `Authentication → Users`에서 서로 다른 테스트 사용자 A와 B가 존재하는지 확인합니다.
+2. 두 사용자의 UUID를 복사합니다. 이메일이나 비밀번호는 복사하지 않습니다.
+3. [`docs/supabase/rls-verification.sql`](./supabase/rls-verification.sql)을 엽니다.
+4. `REPLACE_WITH_USER_A_UUID`, `REPLACE_WITH_USER_B_UUID`를 복사한 UUID로 바꿉니다.
+5. Supabase Dashboard의 `SQL Editor → New query`에 전체 SQL을 붙여 넣고 실행합니다.
+
+마지막 결과의 `all_rls_tests_passed`가 `true`면 다음 항목을 통과한 것입니다.
+
+- 사용자별 `auth.uid()` 인식
+- 본인 `applications` 조회·수정 허용
+- 다른 사용자의 `applications` 조회·수정·삭제 차단
+- 본인 `application_tasks` 조회 허용
+- 다른 사용자의 application에 task 생성 차단
+
+스크립트는 하나의 트랜잭션에서 실행되고 마지막에 `ROLLBACK`하므로 테스트 데이터가 남지 않습니다.
+
+#### 실제 애플리케이션으로 검증
+
+1. 테스트 계정 A로 로그인해 지원 정보와 체크리스트를 생성합니다.
+2. 로그아웃한 뒤 테스트 계정 B로 로그인합니다.
 3. A의 지원 정보가 조회되지 않는지 확인합니다.
 4. B의 세션으로 A의 행을 수정하거나 삭제할 수 없는지 확인합니다.
 5. A로 다시 로그인해 원본 데이터가 유지되는지 확인합니다.
