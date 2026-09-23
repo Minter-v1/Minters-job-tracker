@@ -102,7 +102,7 @@ npm run dev
 
 ## 🟢 Supabase 연결
 
-이 저장소에는 각 사용자가 **자신의 Supabase 프로젝트**를 연결할 수 있도록 환경변수 템플릿, 데이터베이스 스키마, RLS 정책과 설정 가이드가 포함되어 있습니다.
+ApplyLog는 **운영자 소유의 Supabase 프로젝트 하나**를 사용합니다. 일반 사용자는 Supabase를 직접 연결하지 않으며, 가입 요청 후 관리자의 승인을 받은 사람만 초대 메일을 통해 계정을 활성화합니다.
 
 > [!NOTE]
 > Supabase 설정 자료는 준비되어 있지만 현재 화면의 데이터 처리는 아직 `localStorage`를 사용합니다. Auth와 Supabase CRUD 코드가 적용되기 전까지 환경변수만 등록해도 저장 방식이 자동으로 바뀌지는 않습니다.
@@ -110,12 +110,14 @@ npm run dev
 <details>
 <summary><strong>Supabase 준비 과정 펼쳐보기</strong></summary>
 
-1. Supabase에서 새 프로젝트를 생성합니다.
+1. 운영자 계정으로 Supabase 프로젝트를 생성합니다.
 2. [`.env.example`](./.env.example)을 `.env.local`로 복사합니다.
-3. 본인의 Project URL과 Publishable Key를 입력합니다.
-4. [`docs/supabase/schema.sql`](./docs/supabase/schema.sql)을 SQL Editor에서 실행합니다.
-5. 이메일 또는 OAuth Provider와 Redirect URL을 설정합니다.
-6. 두 개의 테스트 계정으로 사용자 데이터가 분리되는지 검증합니다.
+3. Project URL, Publishable Key와 서버 전용 Secret Key를 입력합니다.
+4. [`docs/supabase/schema.sql`](./docs/supabase/schema.sql)을 실행합니다.
+5. 최초 관리자 Auth 사용자를 만들고 `admin` 역할을 부여합니다.
+6. Supabase의 공개 회원가입을 비활성화합니다.
+7. 가입 요청 → 관리자 승인 → 초대 메일 흐름을 구현합니다.
+8. 일반 사용자 간 지원 데이터가 분리되는지 검증합니다.
 
 ```bash
 cp .env.example .env.local
@@ -124,6 +126,7 @@ cp .env.example .env.local
 ```dotenv
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
+SUPABASE_SECRET_KEY=sb_secret_YOUR_KEY
 ```
 
 </details>
@@ -131,14 +134,14 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
 전체 과정은 **[Supabase 연결 가이드](./docs/SUPABASE_SETUP.md)**에서 확인할 수 있습니다.
 
 > [!WARNING]
-> `service_role`, Secret key, Database Password는 브라우저 환경변수에 넣거나 GitHub에 커밋하면 안 됩니다. 공개 클라이언트의 데이터 접근은 로그인과 Row Level Security로 제한해야 합니다.
+> Secret Key는 사용자 초대와 승인 처리를 위한 서버 전용 값입니다. `NEXT_PUBLIC_` 접두사를 붙이거나 Client Component에서 읽거나 GitHub에 커밋하면 안 됩니다.
 
 ## 📚 문서
 
 | 문서 | 내용 |
 | --- | --- |
-| [Supabase 연결 가이드](./docs/SUPABASE_SETUP.md) | 프로젝트 생성, 환경변수, Auth, Redirect URL, RLS 검증 |
-| [데이터베이스 스키마](./docs/supabase/schema.sql) | 지원 정보·체크리스트 테이블, 인덱스, RLS 정책 |
+| [Supabase 운영 설정](./docs/SUPABASE_SETUP.md) | 관리자 생성, 승인형 가입, 초대, Auth, RLS 검증 |
+| [데이터베이스 스키마](./docs/supabase/schema.sql) | 권한·가입 요청·지원 정보 테이블과 RLS 정책 |
 | [서비스 이미지 가이드](./docs/images/README.md) | README에 사용할 화면과 파일명, 권장 크기 |
 
 <details>
@@ -172,11 +175,33 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
 
 ```mermaid
 erDiagram
+    AUTH_USERS ||--|| USER_ROLES : has
     AUTH_USERS ||--o{ APPLICATIONS : owns
+    AUTH_USERS ||--o{ ACCESS_REQUESTS : reviews
+    AUTH_USERS o|--o| ACCESS_REQUESTS : invited_as
     APPLICATIONS ||--o{ APPLICATION_TASKS : contains
 
     AUTH_USERS {
         uuid id PK
+        text email
+    }
+
+    USER_ROLES {
+        uuid user_id PK_FK
+        text role
+        timestamptz created_at
+    }
+
+    ACCESS_REQUESTS {
+        uuid id PK
+        text email UK
+        text name
+        text reason
+        text status
+        timestamptz requested_at
+        timestamptz reviewed_at
+        uuid reviewed_by FK
+        uuid invited_user_id FK
     }
 
     APPLICATIONS {
@@ -205,7 +230,7 @@ erDiagram
     }
 ```
 
-`AUTH_USERS`는 Supabase가 관리하는 `auth.users`입니다. 사용자 삭제 시 지원 정보가, 지원 정보 삭제 시 연결된 체크리스트가 함께 삭제되도록 구성했습니다. 전체 DDL과 RLS 정책은 [schema.sql](./docs/supabase/schema.sql)에서 확인할 수 있습니다.
+`AUTH_USERS`는 Supabase가 관리하는 `auth.users`입니다. 가입 요청은 승인 전까지 `ACCESS_REQUESTS`에만 존재하고, 관리자가 승인해 초대할 때 Auth 사용자가 생성됩니다. 전체 DDL과 RLS 정책은 [schema.sql](./docs/supabase/schema.sql)에서 확인할 수 있습니다.
 
 ---
 

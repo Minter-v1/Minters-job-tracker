@@ -1,143 +1,75 @@
 <div align="center">
 
-# ApplyLog × Supabase 설정 가이드
+# ApplyLog × Supabase 운영 설정
 
-각 사용자가 자신의 Supabase 프로젝트에 Auth, PostgreSQL, RLS를 구성하는 방법
+하나의 Supabase 프로젝트에서 관리자 승인형 회원가입과 사용자별 데이터 격리를 구성하는 방법
 
-[프로젝트 생성](#1-supabase-프로젝트-생성) · [환경변수](#2-api-키와-환경변수) · [데이터베이스](#3-데이터베이스-생성) · [인증](#4-인증-설정) · [검증](#6-보안-검증)
+[구조](#서비스-구조) · [프로젝트 설정](#1-supabase-프로젝트와-환경변수) · [관리자](#3-최초-관리자-생성) · [승인 흐름](#5-가입-요청과-승인-흐름) · [검증](#6-반드시-검증할-항목)
 
 </div>
 
 ---
 
 > [!IMPORTANT]
-> 현재 ApplyLog 화면은 `localStorage`를 사용합니다. 이 가이드는 Supabase 리소스를 준비하는 문서이며, Auth와 CRUD 코드가 애플리케이션에 적용되기 전까지 저장 방식이 자동으로 변경되지는 않습니다.
+> ApplyLog 운영자는 Supabase 프로젝트 하나를 관리합니다. 일반 사용자는 Supabase 계정을 만들거나 자신의 프로젝트를 연결하지 않습니다. 사용자는 ApplyLog에서 가입을 요청하고, 관리자가 승인한 사람만 초대 메일을 통해 계정을 활성화합니다.
 
-## 완료 목표
-
-이 문서를 끝까지 수행하면 다음 리소스가 준비됩니다.
+## 서비스 구조
 
 ```mermaid
 flowchart LR
-    U["사용자"] --> A["Supabase Auth"]
-    A --> N["Next.js App Router"]
-    N --> DB["PostgreSQL"]
-    DB --> RLS["Row Level Security"]
-    RLS --> OWN["본인 지원 정보만 CRUD"]
+    G["방문자"] -->|가입 요청| R["access_requests"]
+    R -->|pending 목록| A["관리자 화면"]
+    A -->|승인| API["Next.js 서버 API"]
+    API -->|Secret Key| INV["Supabase Admin API"]
+    INV -->|초대 메일| U["승인된 사용자"]
+    U -->|비밀번호 설정| AUTH["Supabase Auth"]
+    AUTH --> APP["ApplyLog"]
+    APP -->|RLS| DB["본인 지원 데이터"]
 ```
 
-- Supabase 프로젝트와 PostgreSQL 데이터베이스
-- Next.js에서 사용할 Project URL과 Publishable Key
-- `applications`, `application_tasks` 테이블
-- 사용자별 데이터 접근을 제한하는 RLS 정책
-- 이메일 로그인을 위한 Auth 설정
-- localhost와 배포 주소의 Redirect URL
+### 핵심 원칙
 
-## 먼저 확인할 것
+- 공개 회원가입은 비활성화합니다.
+- 가입 요청자는 아직 `auth.users` 사용자가 아닙니다.
+- 관리자가 승인할 때 서버에서 `inviteUserByEmail()`을 호출합니다.
+- Secret Key는 Next.js 서버에서만 사용합니다.
+- 관리자 권한은 이메일 비교가 아니라 `user_roles` 테이블로 판별합니다.
+- 일반 사용자는 RLS를 통해 자신의 지원 정보만 CRUD할 수 있습니다.
 
-| 항목 | 기준 |
-| --- | --- |
-| Node.js | 20.9 이상 |
-| 패키지 관리자 | npm |
-| 작업 위치 | `job-tracker` 프로젝트 루트 |
-| Supabase | 본인 계정과 프로젝트 생성 권한 |
+> [!NOTE]
+> 관리자 이메일은 최초 권한 부여에만 사용합니다. 애플리케이션 코드에 특정 이메일을 하드코딩하지 않습니다.
 
-프로젝트의 현재 Node.js 버전을 확인합니다.
-
-```bash
-node --version
-```
-
-`v20.9.0` 이상이면 다음 단계로 진행합니다.
-
-## 1. Supabase 프로젝트 생성
-
-### 목표
-
-ApplyLog 전용 PostgreSQL과 Auth 리소스를 만듭니다.
-
-### 직접 할 단계
-
-1. [Supabase Dashboard](https://supabase.com/dashboard)에 로그인합니다.
-2. `New project`를 선택합니다.
-3. 프로젝트를 소유할 Organization을 선택합니다.
-4. 프로젝트 이름을 입력합니다. 예: `applylog`
-5. 강력한 Database Password를 생성해 비밀번호 관리자에 보관합니다.
-6. 실제 사용자와 가까운 Region을 선택합니다.
-7. 표시되는 요금제와 예상 비용을 확인한 뒤 프로젝트를 생성합니다.
-
-> [!CAUTION]
-> 프로젝트 생성은 클라우드 리소스를 만듭니다. 유료 플랜을 선택하거나 추가 리소스를 활성화하기 전에 과금 조건을 확인하세요. Database Password는 GitHub, `.env.local`, 채팅에 붙여 넣지 않습니다.
-
-### 예상 화면
-
-프로젝트 준비가 끝나면 Dashboard에 `Table Editor`, `SQL Editor`, `Authentication`, `Project Settings` 메뉴가 표시됩니다.
-
-### 검증
-
-Dashboard 상단에서 방금 만든 프로젝트 이름과 Region이 맞는지 확인합니다.
-
-## 2. API 키와 환경변수
-
-### 목표
-
-Next.js가 본인의 Supabase 프로젝트를 찾을 수 있도록 공개 연결 정보를 설정합니다.
-
-### 키 선택 기준
-
-| 키 | 사용 위치 | RLS | 이 프로젝트에서 사용 |
-| --- | --- | --- | --- |
-| `sb_publishable_...` | 브라우저·일반 클라이언트 | 적용 | ✅ 사용 |
-| Legacy `anon` | 이전 프로젝트의 공개 클라이언트 | 적용 | 호환은 되지만 신규 설정에서는 비권장 |
-| `sb_secret_...` | 신뢰할 수 있는 백엔드 | 우회 | ❌ 사용하지 않음 |
-| Legacy `service_role` | 신뢰할 수 있는 백엔드 | 우회 | ❌ 사용하지 않음 |
-
-> [!WARNING]
-> Secret 또는 `service_role` 키는 RLS를 우회합니다. `NEXT_PUBLIC_` 변수에 넣거나 브라우저 코드, GitHub에 노출하면 안 됩니다.
-
-### 직접 할 단계
-
-1. 프로젝트 Dashboard에서 `Connect`를 엽니다.
-2. Project URL과 Publishable Key를 확인합니다.
-3. 찾기 어렵다면 `Project Settings → API Keys`도 확인합니다.
-4. 프로젝트 루트에서 환경변수 예시를 복사합니다.
-
-```bash
-cp .env.example .env.local
-```
-
-5. `.env.local`을 열고 본인의 값으로 교체합니다.
-
-```dotenv
-NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
-```
-
-### 예상 결과
-
-프로젝트 루트에 `.env.local`이 생기고 두 변수에 더 이상 `YOUR_...` 예시 값이 남아 있지 않아야 합니다.
-
-### 검증
-
-`.env.local`이 Git 커밋 대상에서 제외되는지 확인합니다.
-
-```bash
-git status --short
-```
-
-출력에 `.env.local`이 보이지 않아야 정상입니다. 반대로 `.env.example`은 저장소에 포함되어야 합니다.
-
-## 3. 데이터베이스 생성
-
-### 스키마
+## 데이터베이스 스키마
 
 ```mermaid
 erDiagram
+    AUTH_USERS ||--|| USER_ROLES : has
     AUTH_USERS ||--o{ APPLICATIONS : owns
+    AUTH_USERS ||--o{ ACCESS_REQUESTS : reviews
+    AUTH_USERS o|--o| ACCESS_REQUESTS : invited_as
     APPLICATIONS ||--o{ APPLICATION_TASKS : contains
 
     AUTH_USERS {
         uuid id PK
+        text email
+    }
+
+    USER_ROLES {
+        uuid user_id PK_FK
+        text role
+        timestamptz created_at
+    }
+
+    ACCESS_REQUESTS {
+        uuid id PK
+        text email UK
+        text name
+        text reason
+        text status
+        timestamptz requested_at
+        timestamptz reviewed_at
+        uuid reviewed_by FK
+        uuid invited_user_id FK
     }
 
     APPLICATIONS {
@@ -166,223 +98,288 @@ erDiagram
     }
 ```
 
-- `AUTH_USERS`는 Supabase Auth가 관리하는 `auth.users`를 의미합니다.
-- 사용자가 탈퇴하면 해당 사용자의 `applications`도 함께 삭제됩니다.
-- 지원 정보가 삭제되면 연결된 `application_tasks`도 함께 삭제됩니다.
-- `assessments`에는 코딩테스트·인적성·AI 역량검사를 복수로 저장합니다.
+## 1. Supabase 프로젝트와 환경변수
+
+### 목표
+
+운영자 소유의 Supabase 프로젝트 하나를 만들고 공개 키와 서버 전용 키를 구분합니다.
 
 ### 직접 할 단계
 
-1. Dashboard에서 `SQL Editor`로 이동합니다.
-2. `New query`를 선택합니다.
-3. [`docs/supabase/schema.sql`](./supabase/schema.sql)을 열어 전체 SQL을 복사합니다.
-4. SQL Editor에 붙여 넣습니다.
-5. 상단의 프로젝트 이름을 다시 확인합니다.
-6. `Run`을 선택합니다.
+1. [Supabase Dashboard](https://supabase.com/dashboard)에서 `New project`를 선택합니다.
+2. 프로젝트 이름, Region, Database Password와 요금제를 확인합니다.
+3. 프로젝트 생성 후 `Connect` 또는 `Project Settings → API Keys`를 엽니다.
+4. Project URL, Publishable Key, Secret Key를 확인합니다.
+5. 프로젝트 루트에서 환경변수 파일을 만듭니다.
 
-### 이 SQL이 만드는 것
+```bash
+cp .env.example .env.local
+```
 
-<details>
-<summary><strong>생성 리소스 펼쳐보기</strong></summary>
+6. `.env.local`에 운영 프로젝트의 값을 입력합니다.
 
-| 리소스 | 목적 |
-| --- | --- |
-| `applications` | 기업, 직무, 마감일, 전형, 링크, 메모 저장 |
-| `application_tasks` | 지원 정보별 체크리스트 저장 |
-| 조회 인덱스 | 사용자·마감일·현재 단계·체크리스트 순서 조회 최적화 |
-| `set_updated_at()` | 수정 시각 자동 갱신 |
-| RLS 정책 | 로그인한 사용자가 자신의 데이터만 CRUD하도록 제한 |
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
+SUPABASE_SECRET_KEY=sb_secret_YOUR_KEY
+```
 
-</details>
+| 변수 | 실행 위치 | 용도 |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | 브라우저·서버 | 프로젝트 API 주소 |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 브라우저·서버 | 로그인 및 RLS가 적용되는 일반 요청 |
+| `SUPABASE_SECRET_KEY` | 서버 전용 | 가입 요청 저장, 사용자 초대, 승인 상태 갱신 |
 
-### 예상 출력
-
-SQL Editor에 성공 메시지가 표시되고 오류가 없어야 합니다.
+> [!CAUTION]
+> Secret Key는 RLS를 우회합니다. 변수 이름에 `NEXT_PUBLIC_`을 붙이거나 Client Component에서 읽거나 GitHub에 커밋하면 안 됩니다.
 
 ### 검증
 
-1. `Table Editor`에서 `applications`와 `application_tasks`를 확인합니다.
-2. 각 테이블을 열어 컬럼과 타입을 확인합니다.
-3. 테이블의 RLS 표시가 활성화되어 있는지 확인합니다.
-4. `Database → Policies`에서 각 테이블의 정책을 확인합니다.
+```bash
+git status --short
+```
+
+`.env.local`이 출력되지 않아야 정상입니다. `.env.example`에는 실제 키가 아닌 예시 값만 남겨야 합니다.
+
+## 2. 스키마와 RLS 생성
+
+1. Supabase Dashboard에서 `SQL Editor → New query`로 이동합니다.
+2. [`docs/supabase/schema.sql`](./supabase/schema.sql)의 전체 내용을 붙여 넣습니다.
+3. 실행 대상 프로젝트를 확인하고 `Run`을 선택합니다.
+
+SQL은 다음 리소스를 생성합니다.
+
+| 리소스 | 역할 |
+| --- | --- |
+| `user_roles` | `admin`과 `user` 권한 저장 |
+| `access_requests` | 가입 요청과 승인 결과 저장 |
+| `applications` | 사용자별 지원 정보 저장 |
+| `application_tasks` | 지원별 체크리스트 저장 |
+| `private.is_admin()` | RLS에서 안전하게 관리자 여부 확인 |
+| `handle_new_user_role()` | 초대된 Auth 사용자에게 기본 `user` 역할 부여 |
+
+### 예상 결과
+
+`Table Editor`에서 네 테이블이 보이고 각 테이블의 RLS가 활성화되어야 합니다.
+
+### 검증
+
+`Database → Policies`에서 다음 접근 규칙을 확인합니다.
+
+- `anon`은 네 테이블을 직접 읽거나 쓸 수 없습니다.
+- 로그인 사용자는 자신의 `user_roles` 행만 읽습니다.
+- 관리자는 가입 요청을 조회하고 상태를 변경할 수 있습니다.
+- 일반 사용자는 자신의 `applications`와 하위 task만 CRUD할 수 있습니다.
 
 > [!NOTE]
-> Table Editor는 관리자 권한으로 데이터를 보여줄 수 있습니다. Table Editor에서 행이 보인다는 사실만으로 RLS가 실패한 것은 아닙니다. 최종 검증은 서로 다른 두 사용자 세션으로 수행합니다.
+> 공개 가입 요청 폼은 `anon`이 테이블에 직접 insert하지 않습니다. Next.js 서버 Route Handler가 입력 검증·속도 제한을 수행한 뒤 Secret Key로 저장합니다.
 
-## 4. 인증 설정
+## 3. 최초 관리자 생성
 
-### 이메일 로그인
+### 3-1. Auth 사용자 생성
+
+1. `Authentication → Users`로 이동합니다.
+2. `Add user → Create new user`를 선택합니다.
+3. 운영자 이메일과 강력한 비밀번호를 입력합니다.
+4. 본인이 소유한 이메일임을 확인하고 사용자를 생성합니다.
+
+> [!WARNING]
+> 관리자 이메일과 비밀번호를 저장소 또는 문서에 기록하지 마세요. 이 저장소는 특정 이메일을 하드코딩하지 않습니다.
+
+### 3-2. admin 역할 부여
+
+SQL Editor에서 아래 SQL의 이메일 예시를 실제 관리자 이메일로 바꿔 한 번만 실행합니다.
+
+```sql
+insert into public.user_roles (user_id, role)
+select id, 'admin'
+from auth.users
+where lower(email) = lower('YOUR_ADMIN_EMAIL')
+on conflict (user_id)
+do update set role = excluded.role;
+```
+
+### 검증
+
+다음 SQL은 관리자 계정 한 행과 `admin` 역할을 반환해야 합니다.
+
+```sql
+select u.email, r.role
+from auth.users as u
+join public.user_roles as r on r.user_id = u.id
+where r.role = 'admin';
+```
+
+관리자 이메일을 바꾸려면 새 사용자에게 먼저 `admin` 역할을 부여하고 로그인 검증을 마친 뒤 기존 권한을 변경합니다. 유일한 관리자 권한을 먼저 제거하지 마세요.
+
+## 4. 공개 회원가입 차단
 
 1. `Authentication → Providers`로 이동합니다.
-2. Email Provider가 활성화되어 있는지 확인합니다.
-3. 이메일 확인 절차를 사용할지 결정합니다.
+2. `User Signups` 영역의 `Allow new users to sign up`을 끕니다.
+3. Email Provider는 기존 사용자 로그인과 초대 수락에 필요하므로 활성 상태를 유지합니다.
+4. 익명 로그인을 사용하지 않는다면 `Allow anonymous sign-ins`도 끕니다.
 
-운영 환경에서는 사용자가 실제로 소유한 이메일인지 확인할 수 있도록 이메일 확인 기능을 유지하는 것을 권장합니다.
+### 예상 결과
 
-### URL Configuration
+일반 사용자가 `signUp()`을 직접 호출해도 새 계정을 만들 수 없고, 기존 사용자 로그인과 관리자 초대는 계속 동작합니다.
 
-1. `Authentication → URL Configuration`으로 이동합니다.
-2. 개발 중이라면 Site URL을 다음과 같이 설정합니다.
+> [!IMPORTANT]
+> 가입 버튼을 UI에서 숨기는 것만으로는 공개 가입이 차단되지 않습니다. Supabase Auth 설정 자체에서 신규 가입을 꺼야 합니다.
+
+## 5. 가입 요청과 승인 흐름
+
+### 가입 요청
+
+로그인하지 않은 방문자는 이름, 이메일, 사용 목적을 제출합니다. 브라우저가 Supabase 테이블에 직접 쓰지 않고 다음 서버 API를 호출하도록 구현합니다.
 
 ```text
-http://localhost:3000
+POST /api/access-requests
 ```
 
-3. Redirect URLs에 다음 주소를 추가합니다.
+서버 Route Handler는 다음 작업을 수행해야 합니다.
+
+1. 이메일을 소문자로 정규화합니다.
+2. 필수 입력과 길이를 검증합니다.
+3. 동일 이메일의 중복 요청을 처리합니다.
+4. IP 또는 이메일 기준 속도 제한을 적용합니다.
+5. 필요하면 CAPTCHA를 검증합니다.
+6. Secret Key 클라이언트로 `access_requests`에 저장합니다.
+
+### 관리자 승인
+
+관리자는 로그인 후 `pending` 요청만 확인하고 승인 또는 거절합니다.
+
+승인 API의 권장 순서:
+
+1. 요청한 사용자의 세션을 검증합니다.
+2. `user_roles`에서 요청자가 `admin`인지 확인합니다.
+3. 요청 상태가 아직 `pending`인지 확인합니다.
+4. 서버 전용 클라이언트로 `inviteUserByEmail(email)`을 호출합니다.
+5. 성공 시 요청을 `approved`로 변경합니다.
+6. `reviewed_by`, `reviewed_at`, `invited_user_id`를 기록합니다.
+
+```ts
+await supabaseAdmin.auth.admin.inviteUserByEmail(request.email, {
+  redirectTo: `${siteUrl}/auth/callback`,
+});
+```
+
+> [!WARNING]
+> `inviteUserByEmail()`은 Secret Key가 필요한 관리자 작업입니다. 브라우저 이벤트 핸들러나 Client Component에서 호출하면 안 됩니다.
+
+### 초대 수락
+
+승인된 사용자는 Supabase의 Invite user 이메일을 받습니다. 링크를 열어 비밀번호를 설정하면 Auth 사용자가 활성화되고 `handle_new_user_role()` 트리거가 기본 `user` 역할을 보장합니다.
+
+초대 링크의 `redirectTo` 주소는 `Authentication → URL Configuration → Redirect URLs`에 미리 등록해야 합니다. 초대 링크가 만료되면 관리자가 다시 보내야 합니다.
+
+## 6. 반드시 검증할 항목
+
+### 가입 정책
+
+- [ ] 공개 `signUp()`으로 계정을 만들 수 없다.
+- [ ] 미승인 이메일은 로그인할 수 없다.
+- [ ] 관리자가 승인하면 초대 메일이 발송된다.
+- [ ] 초대 수락 후 로그인할 수 있다.
+- [ ] 거절된 요청은 Auth 사용자로 생성되지 않는다.
+
+### 관리자 권한
+
+- [ ] 관리자만 가입 요청 목록을 볼 수 있다.
+- [ ] 일반 사용자가 승인 API를 호출하면 `403`이 반환된다.
+- [ ] 브라우저 응답과 번들에 Secret Key가 포함되지 않는다.
+- [ ] 관리자 판별을 이메일 문자열로 처리하지 않는다.
+
+### 사용자 데이터 격리
+
+1. 테스트 계정 A로 지원 정보 한 건을 생성합니다.
+2. 테스트 계정 B로 로그인합니다.
+3. A의 지원 정보가 조회되지 않는지 확인합니다.
+4. B의 세션으로 A의 행을 수정하거나 삭제할 수 없는지 확인합니다.
+5. A로 다시 로그인해 원본 데이터가 유지되는지 확인합니다.
+
+> [!TIP]
+> “화면에서 보이지 않는다”만으로 RLS 검증이 끝난 것은 아닙니다. 다른 사용자의 수정·삭제 요청도 차단되고 원본 행이 보존되는지 확인해야 합니다.
+
+## 7. Redirect URL과 이메일
+
+`Authentication → URL Configuration`에서 환경별 주소를 등록합니다.
+
+개발 환경:
 
 ```text
-http://localhost:3000/**
+Site URL: http://localhost:3000
+Redirect URL: http://localhost:3000/**
 ```
 
-4. 운영 배포 후에는 Site URL을 실제 운영 주소로 변경합니다.
-5. Vercel Preview도 인증 테스트에 사용한다면 팀 또는 계정 slug에 맞는 Preview 패턴을 추가합니다.
+운영 환경:
+
+```text
+Site URL: https://YOUR_DOMAIN
+Redirect URL: https://YOUR_DOMAIN/**
+```
+
+Vercel Preview에서도 초대·로그인을 테스트한다면 다음 패턴을 추가할 수 있습니다.
 
 ```text
 https://*-YOUR_TEAM_OR_ACCOUNT_SLUG.vercel.app/**
 ```
 
-> [!TIP]
-> Site URL은 기본 복귀 주소이고 Redirect URL 목록은 허용 목록입니다. 주소의 `http`·`https`, 포트, 도메인이 실제 실행 환경과 정확히 일치해야 합니다.
+`Authentication → Email Templates → Invite user`에서 초대 메일 문구도 ApplyLog에 맞게 수정합니다.
 
-<details>
-<summary><strong>Google 로그인도 사용할 경우</strong></summary>
+## 8. Vercel 환경변수
 
-1. Google Cloud Console에서 OAuth 동의 화면을 구성합니다.
-2. Web application 타입의 OAuth Client를 만듭니다.
-3. Supabase가 안내하는 Callback URL을 Google의 Authorized redirect URI에 등록합니다.
-4. `Authentication → Providers → Google`을 엽니다.
-5. Google Client ID와 Client Secret을 입력하고 활성화합니다.
-
-Google Client Secret은 Supabase Dashboard에만 입력합니다. `NEXT_PUBLIC_` 환경변수에 저장하지 않습니다.
-
-</details>
-
-## 5. Next.js 연결 준비
-
-### 패키지 설치
-
-프로젝트 루트에서 Supabase JavaScript Client와 SSR 패키지를 설치합니다.
-
-```bash
-npm install @supabase/supabase-js @supabase/ssr
-```
-
-설치 후 `package.json`의 `dependencies`에 두 패키지가 보여야 합니다.
-
-### 권장 파일 구조
-
-```text
-src/lib/supabase/
-├── client.ts   # Client Component와 브라우저 요청
-├── server.ts   # Server Component, Route Handler, Server Action
-└── proxy.ts    # 인증 쿠키 갱신 로직
-```
-
-Next.js App Router에서는 브라우저 클라이언트와 서버 클라이언트를 분리합니다. 서버 렌더링에서 인증 쿠키를 읽고 갱신할 때는 `@supabase/ssr`을 사용하며, 보호된 서버 작업은 Supabase가 검증한 claims를 기준으로 판단합니다.
-
-> [!IMPORTANT]
-> 애플리케이션의 로그인 확인만으로는 데이터가 보호되지 않습니다. 브라우저 요청은 조작될 수 있으므로 PostgreSQL RLS가 최종 접근 제어를 담당해야 합니다.
-
-## 6. 보안 검증
-
-연동 코드까지 적용한 뒤 아래 순서로 확인합니다.
-
-### 기본 사용자 흐름
-
-- [ ] 회원가입 후 로그인할 수 있다.
-- [ ] 로그아웃 후 보호된 화면에 접근할 수 없다.
-- [ ] 지원 정보를 생성·조회·수정·삭제할 수 있다.
-- [ ] 새로고침 후에도 데이터가 유지된다.
-- [ ] 체크리스트가 지원 정보와 함께 조회된다.
-
-### RLS 격리 테스트
-
-1. 테스트 계정 A로 로그인합니다.
-2. 식별하기 쉬운 지원 정보를 한 건 생성합니다.
-3. 로그아웃합니다.
-4. 테스트 계정 B로 로그인합니다.
-5. 계정 A가 만든 지원 정보가 보이지 않는지 확인합니다.
-6. 계정 B의 세션으로 계정 A의 행을 수정하거나 삭제할 수 없는지 확인합니다.
-7. 다시 계정 A로 로그인해 원본 행이 그대로인지 확인합니다.
-
-> [!WARNING]
-> “계정 B의 화면에 행이 안 보인다”만으로 수정 차단까지 증명되지는 않습니다. B의 변경 시도가 실패하고 A의 원본 데이터가 유지되는지 함께 확인해야 합니다.
-
-### 브라우저에서 볼 곳
-
-DevTools의 `Network` 탭에서 Supabase 요청을 선택해 다음을 확인합니다.
-
-- 요청 URL과 HTTP Method
-- HTTP Status
-- Request Payload
-- Response Body의 오류 메시지
-- 로그인 쿠키와 세션 갱신 여부
-
-## 7. Vercel에 연결할 때
-
-GitHub 저장소를 Vercel에 Import한 후 다음 경로로 이동합니다.
+Vercel에서 다음 경로로 이동합니다.
 
 ```text
 Project → Settings → Environment Variables
 ```
 
-아래 값을 Production, Preview, Development 중 필요한 환경에 등록합니다.
+세 환경변수를 등록합니다.
 
 ```text
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SECRET_KEY
 ```
 
-환경변수를 추가하거나 변경하면 새 Deployment를 실행해야 합니다. 배포가 끝나면 실제 Vercel 주소를 Supabase의 Site URL 또는 Redirect URL 허용 목록에도 반영합니다.
+Secret Key는 서버에서만 읽히지만 Vercel 환경변수 화면에서도 Production·Preview 적용 범위를 신중하게 선택합니다. 값을 변경한 후에는 새 Deployment가 필요합니다.
 
-## 문제 해결
+## 운영 시 주의사항
 
 <details>
-<summary><strong>환경변수를 읽지 못함</strong></summary>
+<summary><strong>가입 요청 스팸</strong></summary>
 
-- 파일명이 `.env.local`인지 확인합니다.
-- 파일이 `package.json`과 같은 프로젝트 루트에 있는지 확인합니다.
-- 변수 이름의 철자와 `NEXT_PUBLIC_` 접두사를 확인합니다.
-- 개발 서버를 완전히 종료한 뒤 다시 실행합니다.
+공개 요청 API에는 속도 제한과 입력 길이 제한을 적용합니다. 외부 공개 후 스팸이 발생하면 CAPTCHA와 이메일 도메인 차단 정책을 추가합니다.
 
 </details>
 
 <details>
-<summary><strong>로그인 후 잘못된 주소로 이동함</strong></summary>
+<summary><strong>중복 승인</strong></summary>
 
-- `Authentication → URL Configuration`의 Site URL을 확인합니다.
-- localhost와 배포 주소가 Redirect URLs에 포함되어 있는지 확인합니다.
-- `http`, `https`, 포트 번호를 비교합니다.
-- Vercel Preview 주소를 사용한다면 wildcard 패턴의 계정 slug를 확인합니다.
+승인 직전에 요청이 `pending`인지 다시 확인합니다. 동일 이메일을 다시 초대하면 이미 존재하는 사용자 오류가 발생할 수 있으므로 요청 상태와 Auth 사용자를 함께 확인합니다.
 
 </details>
 
 <details>
-<summary><strong>데이터가 조회되지 않음</strong></summary>
+<summary><strong>초대는 성공했지만 요청 상태 갱신이 실패함</strong></summary>
 
-- 현재 사용자가 로그인되어 있는지 확인합니다.
-- 해당 행의 `user_id`가 로그인 사용자 ID와 일치하는지 확인합니다.
-- RLS가 활성화되어 있고 정책의 대상 role이 `authenticated`인지 확인합니다.
-- DevTools `Network`에서 응답 상태와 오류 메시지를 확인합니다.
+Auth 사용자 생성과 데이터베이스 업데이트는 하나의 DB 트랜잭션이 아닙니다. 서버 로그에 초대 결과를 남기고, 관리 화면에서 Auth 사용자와 요청 상태를 재조정할 수 있는 복구 절차를 둡니다.
 
 </details>
 
 <details>
-<summary><strong>다른 사용자의 데이터가 보임</strong></summary>
+<summary><strong>관리자 계정 보호</strong></summary>
 
-운영 사용을 중단하고 다음을 즉시 확인합니다.
-
-1. 두 테이블의 RLS가 활성화되어 있는가
-2. 공개 클라이언트에 Secret 또는 `service_role` 키를 사용하지 않았는가
-3. 요청의 사용자 세션이 올바른가
-4. 정책의 `using`과 `with check` 조건이 모두 존재하는가
+관리자 비밀번호는 재사용하지 않고 가능한 경우 MFA를 활성화합니다. 관리자 세션이 탈취되면 사용자 초대 권한과 가입 요청 정보가 노출될 수 있습니다.
 
 </details>
 
 ## 참고 자료
 
-- [Supabase Next.js Quickstart](https://supabase.com/docs/guides/getting-started/quickstarts/nextjs)
-- [Supabase Server-Side Auth for Next.js](https://supabase.com/docs/guides/auth/server-side/nextjs)
-- [Supabase Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
-- [Supabase Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security)
+- [Supabase User Management and Invitations](https://supabase.com/docs/guides/auth/managing-user-data)
+- [Supabase JavaScript Admin API](https://supabase.com/docs/reference/javascript/admin-api)
+- [Supabase General Auth Configuration](https://supabase.com/docs/guides/auth/general-configuration)
 - [Supabase API Keys](https://supabase.com/docs/guides/api/api-keys)
+- [Supabase Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security)
+- [Supabase Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
