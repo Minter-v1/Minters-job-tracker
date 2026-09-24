@@ -29,6 +29,7 @@ type ApplicationRow = {
   id: string;
   company: string;
   role: string;
+  start_date: string | null;
   deadline: string;
   status: JobStatus;
   current_step: ProcessStep;
@@ -45,6 +46,7 @@ type ApplicationChanges = Partial<
     Job,
     | "company"
     | "role"
+    | "startDate"
     | "deadline"
     | "status"
     | "currentStep"
@@ -58,6 +60,7 @@ const applicationColumns = `
   id,
   company,
   role,
+  start_date,
   deadline,
   status,
   current_step,
@@ -72,6 +75,7 @@ function toJob(row: ApplicationRow): Job {
     id: row.id,
     company: row.company,
     role: row.role,
+    startDate: row.start_date,
     deadline: row.deadline,
     status: row.status,
     currentStep: row.current_step,
@@ -110,6 +114,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
         id,
         company,
         role,
+        start_date,
         deadline,
         status,
         current_step,
@@ -158,6 +163,7 @@ export async function createApplication(
     .insert({
       company: draft.company,
       role: draft.role,
+      start_date: draft.startDate || null,
       deadline: draft.deadline,
       status: "준비 중",
       current_step: draft.currentStep,
@@ -188,6 +194,7 @@ export async function updateApplication(
 
   if (changes.company !== undefined) payload.company = changes.company;
   if (changes.role !== undefined) payload.role = changes.role;
+  if (changes.startDate !== undefined) payload.start_date = changes.startDate || null;
   if (changes.deadline !== undefined) payload.deadline = changes.deadline;
   if (changes.status !== undefined) payload.status = changes.status;
   if (changes.currentStep !== undefined) payload.current_step = changes.currentStep;

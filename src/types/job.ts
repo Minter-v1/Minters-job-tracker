@@ -6,5 +6,5 @@ export const ASSESSMENT_TYPES = ["코딩테스트", "인적성", "AI 역량검�
 export type AssessmentType = string;
 export type JobTask = { id: string; label: string; done: boolean };
 export type JobStage = { id: string; title: string; scheduledDate: string | null; completed: boolean; position: number };
-export type Job = { id: string; company: string; role: string; deadline: string; status: JobStatus; currentStep: ProcessStep; assessments: AssessmentType[]; link: string; memo: string; tasks: JobTask[]; stages: JobStage[]; createdAt: string };
-export type JobDraft = Pick<Job, "company" | "role" | "deadline" | "currentStep" | "assessments" | "link">;
+export type Job = { id: string; company: string; role: string; startDate: string | null; deadline: string; status: JobStatus; currentStep: ProcessStep; assessments: AssessmentType[]; link: string; memo: string; tasks: JobTask[]; stages: JobStage[]; createdAt: string };
+export type JobDraft = Pick<Job, "company" | "role" | "startDate" | "deadline" | "currentStep" | "assessments" | "link">;

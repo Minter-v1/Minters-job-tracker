@@ -56,6 +56,7 @@ create table if not exists public.applications (
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   company text not null check (char_length(trim(company)) > 0),
   role text not null check (char_length(trim(role)) > 0),
+  start_date date,
   deadline date not null,
   status text not null default '준비 중'
     check (status in ('관심', '준비 중', '지원 완료', '서류 합격', '면접', '최종 합격', '불합격')),
@@ -66,7 +67,9 @@ create table if not exists public.applications (
   link text not null default '',
   memo text not null default '',
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint applications_recruitment_period_check
+    check (start_date is null or start_date <= deadline)
 );
 
 create table if not exists public.application_tasks (
