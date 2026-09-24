@@ -214,6 +214,7 @@ function periodSegmentsForWeek(jobs: Job[], week: Date[]): CalendarPeriodSegment
 }
 
 function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month: Date; setMonth: (date: Date) => void; onSelect: (id: string) => void }) {
+  const [highlightedPeriodId, setHighlightedPeriodId] = useState<string | null>(null);
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const start = new Date(first);
   start.setDate(1 - first.getDay());
@@ -245,16 +246,16 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
             const daily = events.filter((event) => event.date === key);
             const outside = date.getMonth() !== month.getMonth();
             return <div key={key} className={`min-h-32 min-w-0 border-r border-slate-100 py-2 ${outside ? "bg-slate-50/60" : ""}`}><div className={`mb-1 ml-2 flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${key === today ? "bg-cyan-500 text-white" : outside ? "text-slate-300" : "text-slate-500"}`}>{date.getDate()}</div><div aria-hidden="true" style={{ height: `${laneCount * 34}px` }}/><div className="space-y-1">{daily.slice(0, 3).map((event) => <CalendarEventItem key={`${event.job.id}-${event.kind}-${event.title}-${event.date}`} event={event} hue={colors.get(companyColorKey(event.job.company)) ?? 192} onSelect={onSelect}/>)}{daily.length > 3 && <p className="px-2 text-[9px] text-slate-400">+{daily.length - 3}개</p>}</div></div>;
-          })}{segments.length > 0 && <div className="pointer-events-none absolute inset-x-0 top-10 grid grid-cols-7 gap-y-1" style={{ gridTemplateRows: `repeat(${laneCount}, 30px)` }}>{segments.map((segment) => <CalendarPeriodBar key={segment.job.id} segment={segment} hue={colors.get(companyColorKey(segment.job.company)) ?? 192} onSelect={onSelect}/>)}</div>}</div>;
+          })}{segments.length > 0 && <div className="pointer-events-none absolute inset-x-0 top-10 grid grid-cols-7 gap-y-1" style={{ gridTemplateRows: `repeat(${laneCount}, 30px)` }}>{segments.map((segment) => <CalendarPeriodBar key={segment.job.id} segment={segment} hue={colors.get(companyColorKey(segment.job.company)) ?? 192} highlighted={highlightedPeriodId === segment.job.id} onHighlight={setHighlightedPeriodId} onSelect={onSelect}/>)}</div>}</div>;
         })}</div>
       </div>
     </div>
   </section>;
 }
 
-function CalendarPeriodBar({ segment, hue, onSelect }: { segment: CalendarPeriodSegment; hue: number; onSelect: (id: string) => void }) {
-  return <button onClick={() => onSelect(segment.job.id)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간`} title={`${segment.job.company} · ${segment.job.role} · ${formatPeriod(segment.job.startDate, segment.job.deadline)}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative z-[1] flex h-[30px] min-w-0 items-center gap-1.5 overflow-hidden px-2 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
-    <BriefcaseIcon className="size-3.5 shrink-0 opacity-70 transition-transform group-hover:scale-110"/>
+function CalendarPeriodBar({ segment, hue, highlighted, onHighlight, onSelect }: { segment: CalendarPeriodSegment; hue: number; highlighted: boolean; onHighlight: (id: string | null) => void; onSelect: (id: string) => void }) {
+  return <button onClick={() => onSelect(segment.job.id)} onPointerEnter={() => onHighlight(segment.job.id)} onPointerLeave={() => onHighlight(null)} onFocus={() => onHighlight(segment.job.id)} onBlur={() => onHighlight(null)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간`} title={`${segment.job.company} · ${segment.job.role} · ${formatPeriod(segment.job.startDate, segment.job.deadline)}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative flex h-[30px] min-w-0 items-center gap-1.5 overflow-hidden px-2 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${highlighted ? "z-10 -translate-y-0.5 brightness-95 shadow-md ring-1 ring-black/10" : "z-[1]"} ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
+    <BriefcaseIcon className={`size-3.5 shrink-0 opacity-70 transition-transform ${highlighted ? "scale-110" : "group-hover:scale-110"}`}/>
     <span className="flex min-w-0 flex-col leading-none"><span className="truncate text-[9px] font-bold sm:text-[10px]">{segment.job.company}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75 sm:text-[9px]">{segment.job.role}</span></span>
   </button>;
 }
