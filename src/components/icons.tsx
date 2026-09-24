@@ -11,3 +11,4 @@ export const ExternalIcon = (p: P) => <I {...p}><path d="M14 4h6v6M10 14 20 4M20
 export const CloseIcon = (p: P) => <I {...p}><path d="m6 6 12 12M18 6 6 18"/></I>;
 export const TrashIcon = (p: P) => <I {...p}><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></I>;
 export const ChevronIcon = (p: P) => <I {...p}><path d="m9 6 6 6-6 6"/></I>;
+export const SortIcon = (p: P) => <I {...p}><path d="M8 6h10M8 12h7M8 18h4M5 4v16M2.5 17.5 5 20l2.5-2.5"/></I>;
