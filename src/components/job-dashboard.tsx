@@ -215,12 +215,14 @@ function periodSegmentsForWeek(jobs: Job[], week: Date[]): CalendarPeriodSegment
 
 function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month: Date; setMonth: (date: Date) => void; onSelect: (id: string) => void }) {
   const [highlightedPeriodId, setHighlightedPeriodId] = useState<string | null>(null);
+  const [hiddenCompanyKeys, setHiddenCompanyKeys] = useState<string[]>([]);
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const start = new Date(first);
   start.setDate(1 - first.getDay());
   const days = Array.from({ length: 42 }, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return date; });
   const weeks = Array.from({ length: 6 }, (_, index) => days.slice(index * 7, index * 7 + 7));
-  const events: CalendarEvent[] = jobs.flatMap((job) => {
+  const visibleJobs = jobs.filter((job) => !hiddenCompanyKeys.includes(companyColorKey(job.company)));
+  const events: CalendarEvent[] = visibleJobs.flatMap((job) => {
     const deadlineEvents: CalendarEvent[] = job.startDate ? [] : [{ date: job.deadline, title: "지원 마감", job, completed: job.currentStep !== "지원 준비", kind: "deadline" }];
     const stageEvents: CalendarEvent[] = job.stages
       .filter((stage) => stage.title !== "지원 준비" && stage.scheduledDate)
@@ -234,12 +236,12 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
 
   return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
     <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5"><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><div className="flex items-center gap-3"><h2 className="text-sm font-bold">{month.getFullYear()}년 {month.getMonth() + 1}월</h2><button className="text-xs font-semibold text-cyan-600" onClick={() => { const date = new Date(); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); }}>오늘</button></div><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div>
-    {companies.length > 0 && <div className="flex gap-3 overflow-x-auto border-b border-slate-100 px-4 py-2.5 sm:px-5" aria-label="기업별 캘린더 색상"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 색상</span>{companies.map(([key, company]) => <span key={key} className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-slate-600"><span className="size-2.5 rounded-[3px]" style={{ backgroundColor: `hsl(${colors.get(key) ?? 192} 72% 72%)` }}/>{company}</span>)}</div>}
+    {companies.length > 0 && <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-100 px-4 py-2.5 sm:px-5" aria-label="기업별 일정 필터"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 필터</span>{hiddenCompanyKeys.length > 0 && <button type="button" onClick={() => setHiddenCompanyKeys([])} className="shrink-0 text-[10px] font-bold text-cyan-700 hover:text-cyan-900">전체 선택</button>}{companies.map(([key, company]) => { const checked = !hiddenCompanyKeys.includes(key); return <label key={key} className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold transition-colors ${checked ? "border-slate-200 bg-white text-slate-700 hover:border-slate-300" : "border-transparent bg-slate-100 text-slate-400 hover:text-slate-600"}`}><input type="checkbox" className="sr-only" checked={checked} onChange={() => setHiddenCompanyKeys((current) => checked ? [...current, key] : current.filter((item) => item !== key))}/><span className="flex size-3 items-center justify-center rounded-[3px]" style={{ backgroundColor: checked ? `hsl(${colors.get(key) ?? 192} 72% 72%)` : "rgb(203 213 225)" }}>{checked && <CheckIcon className="size-2 text-slate-700"/>}</span>{company}</label>; })}</div>}
     <div className="overflow-x-auto">
       <div className="min-w-[720px]">
         <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">{["일", "월", "화", "수", "목", "금", "토"].map((day) => <div key={day} className="px-2 py-2 text-center text-[10px] font-bold text-slate-400">{day}</div>)}</div>
         <div>{weeks.map((week) => {
-          const segments = periodSegmentsForWeek(jobs, week);
+          const segments = periodSegmentsForWeek(visibleJobs, week);
           const laneCount = segments.length ? Math.max(...segments.map((segment) => segment.lane)) + 1 : 0;
           return <div key={localDate(week[0])} className="relative grid grid-cols-7 border-b border-slate-100">{week.map((date) => {
             const key = localDate(date);
@@ -254,18 +256,24 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
 }
 
 function CalendarPeriodBar({ segment, hue, highlighted, onHighlight, onSelect }: { segment: CalendarPeriodSegment; hue: number; highlighted: boolean; onHighlight: (id: string | null) => void; onSelect: (id: string) => void }) {
-  return <button onClick={() => onSelect(segment.job.id)} onPointerEnter={() => onHighlight(segment.job.id)} onPointerLeave={() => onHighlight(null)} onFocus={() => onHighlight(segment.job.id)} onBlur={() => onHighlight(null)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간`} title={`${segment.job.company} · ${segment.job.role} · ${formatPeriod(segment.job.startDate, segment.job.deadline)}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative flex h-[30px] min-w-0 items-center gap-1.5 overflow-hidden px-2 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${highlighted ? "z-10 -translate-y-0.5 brightness-95 shadow-md ring-1 ring-black/10" : "z-[1]"} ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
+  return <button onClick={() => onSelect(segment.job.id)} onPointerEnter={() => onHighlight(segment.job.id)} onPointerLeave={() => onHighlight(null)} onFocus={() => onHighlight(segment.job.id)} onBlur={() => onHighlight(null)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative flex h-[30px] min-w-0 items-center gap-1.5 px-2 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-20 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${highlighted ? "z-10 -translate-y-0.5 brightness-95 shadow-md ring-1 ring-black/10" : "z-[1]"} ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
     <BriefcaseIcon className={`size-3.5 shrink-0 opacity-70 transition-transform ${highlighted ? "scale-110" : "group-hover:scale-110"}`}/>
-    <span className="flex min-w-0 flex-col leading-none"><span className="truncate text-[9px] font-bold sm:text-[10px]">{segment.job.company}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75 sm:text-[9px]">{segment.job.role}</span></span>
+    <span className="flex min-w-0 overflow-hidden flex-col leading-none"><span className="truncate text-[9px] font-bold sm:text-[10px]">{segment.job.company}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75 sm:text-[9px]">{segment.job.role}</span></span>
+    <CalendarTooltip>{segment.job.company} · {segment.job.role} · {formatPeriod(segment.job.startDate, segment.job.deadline)}</CalendarTooltip>
   </button>;
 }
 
 function CalendarEventItem({ event, hue, onSelect }: { event: CalendarEvent; hue: number; onSelect: (id: string) => void }) {
   const Icon = event.kind === "deadline" ? CalendarIcon : ClockIcon;
-  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.job.role} ${event.title}`} title={`${event.job.company} · ${event.job.role} · ${event.title}`} style={calendarColor(hue, event.completed)} className={`group relative z-[1] mx-2 flex min-h-8 w-[calc(100%-1rem)] min-w-0 items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${event.completed ? "line-through" : ""}`}>
+  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.job.role} ${event.title}`} style={calendarColor(hue, event.completed)} className={`group relative z-[1] mx-2 flex min-h-8 w-[calc(100%-1rem)] min-w-0 items-center gap-1 rounded-md px-1.5 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-20 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${event.completed ? "line-through" : ""}`}>
     <Icon className="size-3 shrink-0 opacity-70 transition-transform group-hover:scale-110"/>
-    <span className="flex min-w-0 flex-col leading-none"><span className="truncate text-[9px] font-bold">{event.job.company} · {event.title}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75">{event.job.role}</span></span>
+    <span className="flex min-w-0 overflow-hidden flex-col leading-none"><span className="truncate text-[9px] font-bold">{event.job.company} · {event.title}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75">{event.job.role}</span></span>
+    <CalendarTooltip>{event.job.company} · {event.job.role} · {event.title}</CalendarTooltip>
   </button>;
+}
+
+function CalendarTooltip({ children }: { children: React.ReactNode }) {
+  return <span role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 max-w-64 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2 py-1.5 text-[10px] font-semibold text-white opacity-0 shadow-lg transition-opacity delay-75 duration-100 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none">{children}</span>;
 }
 
 function AssessmentPicker({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
