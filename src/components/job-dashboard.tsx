@@ -101,7 +101,29 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   async function toggleTask(id: string, done: boolean) { if (!selected) return; const ok = await runWrite(async () => { await updateApplicationTask(createClient(), id, done); return true; }); if (ok) updateJob(selected.id, { tasks: selected.tasks.map((task) => task.id === id ? { ...task, done } : task) }); }
   async function removeTask(id: string) { if (!selected) return; const ok = await runWrite(async () => { await deleteApplicationTask(createClient(), id); return true; }); if (ok) updateJob(selected.id, { tasks: selected.tasks.filter((task) => task.id !== id) }); }
   async function addStage(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selected || !newStage.trim()) return; const stage = await runWrite(() => createApplicationStage(createClient(), selected.id, newStage)); if (stage) { updateJob(selected.id, { stages: [...selected.stages, stage] }); setNewStage(""); } }
-  async function patchStage(id: string, changes: Partial<JobStage>) { if (!selected) return; const ok = await runWrite(async () => { await updateApplicationStage(createClient(), id, changes); return true; }); if (!ok) return; const stages = selected.stages.map((stage) => stage.id === id ? { ...stage, ...changes } : stage); updateJob(selected.id, { stages }); }
+  async function patchStage(id: string, changes: Partial<JobStage>) {
+    if (!selected) return;
+    const changedStage = selected.stages.find((stage) => stage.id === id);
+    const ok = await runWrite(async () => { await updateApplicationStage(createClient(), id, changes); return true; });
+    if (!ok || !changedStage) return;
+
+    const stages = selected.stages.map((stage) => stage.id === id ? { ...stage, ...changes } : stage);
+    const applicationChanges: Partial<Job> = { stages };
+
+    if (changes.completed === true && changedStage.title === selected.currentStep) {
+      const next = stages
+        .filter((stage) => stage.position > changedStage.position && !stage.completed)
+        .sort((a, b) => a.position - b.position)[0];
+      if (next) applicationChanges.currentStep = next.title;
+    }
+
+    if (changes.completed === false) {
+      const currentPosition = stages.find((stage) => stage.title === selected.currentStep)?.position ?? Number.MAX_SAFE_INTEGER;
+      if (changedStage.position <= currentPosition) applicationChanges.currentStep = changedStage.title;
+    }
+
+    updateJob(selected.id, applicationChanges);
+  }
   async function removeStage(id: string) { if (!selected) return; const removed = selected.stages.find((stage) => stage.id === id); const ok = await runWrite(async () => { await deleteApplicationStage(createClient(), id); return true; }); if (!ok) return; const stages = selected.stages.filter((stage) => stage.id !== id); const changes: Partial<Job> = { stages }; if (removed?.title === selected.currentStep) changes.currentStep = stages.find((stage) => !stage.completed)?.title ?? stages.at(-1)?.title ?? "지원 준비"; updateJob(selected.id, changes); }
   async function moveStage(index: number, direction: -1 | 1) { if (!selected || index + direction < 0 || index + direction >= selected.stages.length) return; const stages = [...selected.stages]; [stages[index], stages[index + direction]] = [stages[index + direction], stages[index]]; stages.forEach((stage, position) => { stage.position = position; }); updateJob(selected.id, { stages }); await Promise.all(stages.map((stage) => runWrite(() => updateApplicationStage(createClient(), stage.id, { position: stage.position })))); }
 
