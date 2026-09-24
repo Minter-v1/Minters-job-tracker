@@ -40,6 +40,18 @@ function datesInRange(startDate: string, endDate: string) {
 }
 function currentStepOptions(job: Job) { return Array.from(new Set([...job.stages.map((stage) => stage.title), ...PROCESS_STEPS])); }
 function relevantScheduleDate(job: Job) { return job.currentStep === "지원 준비" ? job.deadline : nextStage(job)?.scheduledDate ?? null; }
+function companyColorKey(company: string) { return company.trim().toLocaleLowerCase("ko-KR"); }
+function companyColorMap(jobs: Job[]) {
+  const companies = Array.from(new Set(jobs.map((job) => companyColorKey(job.company)))).sort((a, b) => a.localeCompare(b, "ko"));
+  return new Map(companies.map((company, index) => [company, (192 + index * (360 / companies.length)) % 360]));
+}
+function calendarColor(hue: number, completed: boolean) {
+  return {
+    backgroundColor: `hsl(${hue} 72% ${completed ? 93 : 88}%)`,
+    color: `hsl(${hue} 62% ${completed ? 39 : 27}%)`,
+    opacity: completed ? 0.72 : 1,
+  };
+}
 function applicationState(job: Job) {
   if (job.currentStep === "불합격") return { label: "불합격", className: "border-rose-200 bg-rose-50 text-rose-600" };
   if (job.currentStep === "최종 합격") return { label: "최종 합격", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
@@ -206,9 +218,13 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
     return [...recruitmentEvents, ...stageEvents];
   });
   const today = localDate(new Date());
+  const colors = companyColorMap(jobs);
+  const companies = Array.from(new Map(jobs.map((job) => [companyColorKey(job.company), job.company])).entries())
+    .sort(([, a], [, b]) => a.localeCompare(b, "ko"));
 
   return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
     <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5"><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><div className="flex items-center gap-3"><h2 className="text-sm font-bold">{month.getFullYear()}년 {month.getMonth() + 1}월</h2><button className="text-xs font-semibold text-cyan-600" onClick={() => { const date = new Date(); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); }}>오늘</button></div><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div>
+    {companies.length > 0 && <div className="flex gap-3 overflow-x-auto border-b border-slate-100 px-4 py-2.5 sm:px-5" aria-label="기업별 캘린더 색상"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 색상</span>{companies.map(([key, company]) => <span key={key} className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-slate-600"><span className="size-2.5 rounded-[3px]" style={{ backgroundColor: `hsl(${colors.get(key) ?? 192} 72% 72%)` }}/>{company}</span>)}</div>}
     <div className="overflow-x-auto">
       <div className="min-w-[720px]">
         <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">{["일", "월", "화", "수", "목", "금", "토"].map((day) => <div key={day} className="px-2 py-2 text-center text-[10px] font-bold text-slate-400">{day}</div>)}</div>
@@ -216,24 +232,22 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
           const key = localDate(date);
           const daily = events.filter((event) => event.date === key).sort((a, b) => Number(b.kind === "period") - Number(a.kind === "period"));
           const outside = date.getMonth() !== month.getMonth();
-          return <div key={key} className={`min-h-32 min-w-0 border-b border-r border-slate-100 py-2 ${outside ? "bg-slate-50/60" : ""}`}><div className={`mb-1 ml-2 flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${key === today ? "bg-cyan-500 text-white" : outside ? "text-slate-300" : "text-slate-500"}`}>{date.getDate()}</div><div className="space-y-1">{daily.slice(0, 3).map((event) => <CalendarEventItem key={`${event.job.id}-${event.kind}-${event.title}-${event.date}`} event={event} weekday={date.getDay()} onSelect={onSelect}/>)}{daily.length > 3 && <p className="px-2 text-[9px] text-slate-400">+{daily.length - 3}개</p>}</div></div>;
+          return <div key={key} className={`min-h-32 min-w-0 border-b border-r border-slate-100 py-2 ${outside ? "bg-slate-50/60" : ""}`}><div className={`mb-1 ml-2 flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${key === today ? "bg-cyan-500 text-white" : outside ? "text-slate-300" : "text-slate-500"}`}>{date.getDate()}</div><div className="space-y-1">{daily.slice(0, 3).map((event) => <CalendarEventItem key={`${event.job.id}-${event.kind}-${event.title}-${event.date}`} event={event} weekday={date.getDay()} hue={colors.get(companyColorKey(event.job.company)) ?? 192} onSelect={onSelect}/>)}{daily.length > 3 && <p className="px-2 text-[9px] text-slate-400">+{daily.length - 3}개</p>}</div></div>;
         })}</div>
       </div>
     </div>
   </section>;
 }
 
-function CalendarEventItem({ event, weekday, onSelect }: { event: CalendarEvent; weekday: number; onSelect: (id: string) => void }) {
+function CalendarEventItem({ event, weekday, hue, onSelect }: { event: CalendarEvent; weekday: number; hue: number; onSelect: (id: string) => void }) {
   const isPeriod = event.kind === "period";
   const continuesLeft = isPeriod && event.segment !== "start" && event.segment !== "single" && weekday !== 0;
   const continuesRight = isPeriod && event.segment !== "end" && event.segment !== "single" && weekday !== 6;
   const roundLeft = !isPeriod || !continuesLeft;
   const roundRight = !isPeriod || !continuesRight;
   const showPeriodLabel = event.segment === "start" || event.segment === "single" || weekday === 0;
-  const periodTone = event.completed ? "bg-slate-200 text-slate-500" : "bg-cyan-100 text-cyan-800 hover:bg-cyan-200";
-  const pointTone = event.completed ? "bg-slate-100 text-slate-400 line-through" : event.kind === "deadline" ? "bg-rose-50 text-rose-600" : "bg-cyan-50 text-cyan-700 hover:bg-cyan-100";
 
-  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.title}`} className={`relative z-[1] block min-h-6 truncate px-1.5 py-1 text-left text-[9px] font-semibold transition-colors sm:text-[10px] ${isPeriod ? `${periodTone} ${continuesRight ? "w-[calc(100%+1px)]" : "w-full"}` : `${pointTone} mx-2 w-[calc(100%-1rem)] rounded-md`} ${roundLeft ? "rounded-l-md" : ""} ${roundRight ? "rounded-r-md" : ""}`}>
+  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.title}`} style={calendarColor(hue, event.completed)} className={`relative z-[1] block min-h-6 truncate px-1.5 py-1 text-left text-[9px] font-semibold transition-[filter,opacity] hover:brightness-95 sm:text-[10px] ${event.completed && !isPeriod ? "line-through" : ""} ${isPeriod ? continuesRight ? "w-[calc(100%+1px)]" : "w-full" : "mx-2 w-[calc(100%-1rem)] rounded-md"} ${roundLeft ? "rounded-l-md" : ""} ${roundRight ? "rounded-r-md" : ""}`}>
     {isPeriod ? showPeriodLabel ? `${event.job.company} · 접수` : "\u00a0" : `${event.job.company} · ${event.title}`}
   </button>;
 }
