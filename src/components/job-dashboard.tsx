@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { logout } from "@/app/auth/actions";
-import { CalendarIcon, CheckIcon, ClockIcon, CloseIcon, ExternalIcon, PlusIcon, SearchIcon, SortIcon, TrashIcon } from "@/components/icons";
+import { BriefcaseIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, ExternalIcon, PlusIcon, SearchIcon, SortIcon, TrashIcon } from "@/components/icons";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { createApplication, createApplicationStage, createApplicationTask, deleteApplication, deleteApplicationStage, deleteApplicationTask, loadApplications, updateApplication, updateApplicationStage, updateApplicationTask } from "@/lib/supabase/applications";
 import { createClient } from "@/lib/supabase/client";
@@ -244,8 +244,8 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
             const key = localDate(date);
             const daily = events.filter((event) => event.date === key);
             const outside = date.getMonth() !== month.getMonth();
-            return <div key={key} className={`min-h-32 min-w-0 border-r border-slate-100 py-2 ${outside ? "bg-slate-50/60" : ""}`}><div className={`mb-1 ml-2 flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${key === today ? "bg-cyan-500 text-white" : outside ? "text-slate-300" : "text-slate-500"}`}>{date.getDate()}</div><div aria-hidden="true" style={{ height: `${laneCount * 28}px` }}/><div className="space-y-1">{daily.slice(0, 3).map((event) => <CalendarEventItem key={`${event.job.id}-${event.kind}-${event.title}-${event.date}`} event={event} hue={colors.get(companyColorKey(event.job.company)) ?? 192} onSelect={onSelect}/>)}{daily.length > 3 && <p className="px-2 text-[9px] text-slate-400">+{daily.length - 3}개</p>}</div></div>;
-          })}{segments.length > 0 && <div className="pointer-events-none absolute inset-x-0 top-10 grid grid-cols-7 gap-y-1" style={{ gridTemplateRows: `repeat(${laneCount}, 24px)` }}>{segments.map((segment) => <CalendarPeriodBar key={segment.job.id} segment={segment} hue={colors.get(companyColorKey(segment.job.company)) ?? 192} onSelect={onSelect}/>)}</div>}</div>;
+            return <div key={key} className={`min-h-32 min-w-0 border-r border-slate-100 py-2 ${outside ? "bg-slate-50/60" : ""}`}><div className={`mb-1 ml-2 flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${key === today ? "bg-cyan-500 text-white" : outside ? "text-slate-300" : "text-slate-500"}`}>{date.getDate()}</div><div aria-hidden="true" style={{ height: `${laneCount * 34}px` }}/><div className="space-y-1">{daily.slice(0, 3).map((event) => <CalendarEventItem key={`${event.job.id}-${event.kind}-${event.title}-${event.date}`} event={event} hue={colors.get(companyColorKey(event.job.company)) ?? 192} onSelect={onSelect}/>)}{daily.length > 3 && <p className="px-2 text-[9px] text-slate-400">+{daily.length - 3}개</p>}</div></div>;
+          })}{segments.length > 0 && <div className="pointer-events-none absolute inset-x-0 top-10 grid grid-cols-7 gap-y-1" style={{ gridTemplateRows: `repeat(${laneCount}, 30px)` }}>{segments.map((segment) => <CalendarPeriodBar key={segment.job.id} segment={segment} hue={colors.get(companyColorKey(segment.job.company)) ?? 192} onSelect={onSelect}/>)}</div>}</div>;
         })}</div>
       </div>
     </div>
@@ -253,14 +253,17 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
 }
 
 function CalendarPeriodBar({ segment, hue, onSelect }: { segment: CalendarPeriodSegment; hue: number; onSelect: (id: string) => void }) {
-  return <button onClick={() => onSelect(segment.job.id)} aria-label={`${segment.job.company} 지원 접수 기간`} title={`${segment.job.company} · ${formatPeriod(segment.job.startDate, segment.job.deadline)}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`pointer-events-auto relative z-[1] min-w-0 truncate px-2 py-1 text-left text-[10px] font-semibold transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
-    {segment.job.company} · 접수
+  return <button onClick={() => onSelect(segment.job.id)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간`} title={`${segment.job.company} · ${segment.job.role} · ${formatPeriod(segment.job.startDate, segment.job.deadline)}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative z-[1] flex h-[30px] min-w-0 items-center gap-1.5 overflow-hidden px-2 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
+    <BriefcaseIcon className="size-3.5 shrink-0 opacity-70 transition-transform group-hover:scale-110"/>
+    <span className="flex min-w-0 flex-col leading-none"><span className="truncate text-[9px] font-bold sm:text-[10px]">{segment.job.company}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75 sm:text-[9px]">{segment.job.role}</span></span>
   </button>;
 }
 
 function CalendarEventItem({ event, hue, onSelect }: { event: CalendarEvent; hue: number; onSelect: (id: string) => void }) {
-  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.title}`} title={`${event.job.company} · ${event.title}`} style={calendarColor(hue, event.completed)} className={`relative z-[1] mx-2 block min-h-6 w-[calc(100%-1rem)] truncate rounded-md px-1.5 py-1 text-left text-[9px] font-semibold transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 sm:text-[10px] ${event.completed ? "line-through" : ""}`}>
-    {event.job.company} · {event.title}
+  const Icon = event.kind === "deadline" ? CalendarIcon : ClockIcon;
+  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.job.role} ${event.title}`} title={`${event.job.company} · ${event.job.role} · ${event.title}`} style={calendarColor(hue, event.completed)} className={`group relative z-[1] mx-2 flex min-h-8 w-[calc(100%-1rem)] min-w-0 items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-10 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${event.completed ? "line-through" : ""}`}>
+    <Icon className="size-3 shrink-0 opacity-70 transition-transform group-hover:scale-110"/>
+    <span className="flex min-w-0 flex-col leading-none"><span className="truncate text-[9px] font-bold">{event.job.company} · {event.title}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75">{event.job.role}</span></span>
   </button>;
 }
 
