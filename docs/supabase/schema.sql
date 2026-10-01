@@ -87,6 +87,7 @@ create table if not exists public.application_stages (
   application_id uuid not null references public.applications (id) on delete cascade,
   title text not null check (title = btrim(title) and char_length(title) between 1 and 40),
   scheduled_date date,
+  scheduled_time time,
   completed boolean not null default false,
   position integer not null default 0 check (position >= 0),
   created_at timestamptz not null default now(),

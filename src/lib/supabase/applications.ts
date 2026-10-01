@@ -21,6 +21,7 @@ type ApplicationStageRow = {
   id: string;
   title: string;
   scheduled_date: string | null;
+  scheduled_time: string | null;
   completed: boolean;
   position: number;
 };
@@ -93,6 +94,7 @@ function toJobStage(row: ApplicationStageRow): JobStage {
     id: row.id,
     title: row.title,
     scheduledDate: row.scheduled_date,
+    scheduledTime: row.scheduled_time?.slice(0, 5) ?? null,
     completed: row.completed,
     position: row.position,
   };
@@ -132,6 +134,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
           id,
           title,
           scheduled_date,
+          scheduled_time,
           completed,
           position
         )
@@ -309,7 +312,7 @@ export async function createApplicationStage(
       title: title.trim(),
       position: (lastStages?.[0]?.position ?? -1) + 1,
     })
-    .select("id, title, scheduled_date, completed, position")
+    .select("id, title, scheduled_date, scheduled_time, completed, position")
     .single();
 
   if (error) throw new Error(error.message);
@@ -319,11 +322,12 @@ export async function createApplicationStage(
 export async function updateApplicationStage(
   supabase: SupabaseClient,
   stageId: string,
-  changes: Partial<Pick<JobStage, "title" | "scheduledDate" | "completed" | "position">>,
+  changes: Partial<Pick<JobStage, "title" | "scheduledDate" | "scheduledTime" | "completed" | "position">>,
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
   if (changes.title !== undefined) payload.title = changes.title.trim();
   if (changes.scheduledDate !== undefined) payload.scheduled_date = changes.scheduledDate || null;
+  if (changes.scheduledTime !== undefined) payload.scheduled_time = changes.scheduledTime || null;
   if (changes.completed !== undefined) payload.completed = changes.completed;
   if (changes.position !== undefined) payload.position = changes.position;
 
