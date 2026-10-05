@@ -31,7 +31,9 @@ type ApplicationRow = {
   company: string;
   role: string;
   start_date: string | null;
+  start_time: string | null;
   deadline: string;
+  deadline_time: string | null;
   status: JobStatus;
   current_step: ProcessStep;
   assessments: AssessmentType[];
@@ -48,7 +50,9 @@ type ApplicationChanges = Partial<
     | "company"
     | "role"
     | "startDate"
+    | "startTime"
     | "deadline"
+    | "deadlineTime"
     | "status"
     | "currentStep"
     | "assessments"
@@ -62,7 +66,9 @@ const applicationColumns = `
   company,
   role,
   start_date,
+  start_time,
   deadline,
+  deadline_time,
   status,
   current_step,
   assessments,
@@ -77,7 +83,9 @@ function toJob(row: ApplicationRow): Job {
     company: row.company,
     role: row.role,
     startDate: row.start_date,
+    startTime: row.start_time?.slice(0, 5) ?? null,
     deadline: row.deadline,
+    deadlineTime: row.deadline_time?.slice(0, 5) ?? null,
     status: row.status,
     currentStep: row.current_step,
     assessments: row.assessments ?? [],
@@ -117,7 +125,9 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
         company,
         role,
         start_date,
+        start_time,
         deadline,
+        deadline_time,
         status,
         current_step,
         assessments,
@@ -167,7 +177,9 @@ export async function createApplication(
       company: draft.company,
       role: draft.role,
       start_date: draft.startDate || null,
+      start_time: draft.startDate ? draft.startTime || null : null,
       deadline: draft.deadline,
+      deadline_time: draft.deadlineTime || null,
       status: "준비 중",
       current_step: draft.currentStep,
       assessments: draft.assessments,
@@ -198,7 +210,9 @@ export async function updateApplication(
   if (changes.company !== undefined) payload.company = changes.company;
   if (changes.role !== undefined) payload.role = changes.role;
   if (changes.startDate !== undefined) payload.start_date = changes.startDate || null;
+  if (changes.startTime !== undefined) payload.start_time = changes.startTime || null;
   if (changes.deadline !== undefined) payload.deadline = changes.deadline;
+  if (changes.deadlineTime !== undefined) payload.deadline_time = changes.deadlineTime || null;
   if (changes.status !== undefined) payload.status = changes.status;
   if (changes.currentStep !== undefined) payload.current_step = changes.currentStep;
   if (changes.assessments !== undefined) payload.assessments = changes.assessments;

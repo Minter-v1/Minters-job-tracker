@@ -155,12 +155,24 @@ SQL은 다음 리소스를 생성합니다.
 | `access_requests` | 가입 요청과 승인 결과 저장 |
 | `applications` | 사용자별 지원 정보 저장 |
 | `application_tasks` | 지원별 체크리스트 저장 |
+| `application_stages` | 지원별 전형 단계와 예정 일정 저장 |
+| `memo-images` | 사용자별 메모 이미지 비공개 저장소 |
 | `private.is_admin()` | RLS에서 안전하게 관리자 여부 확인 |
 | `handle_new_user_role()` | 초대된 Auth 사용자에게 기본 `user` 역할 부여 |
 
 ### 예상 결과
 
-`Table Editor`에서 네 테이블이 보이고 각 테이블의 RLS가 활성화되어야 합니다.
+`Table Editor`에서 다섯 테이블이 보이고 각 테이블의 RLS가 활성화되어야 합니다. `Storage`에는 비공개 `memo-images` 버킷이 보여야 합니다.
+
+### 이미 운영 중인 프로젝트 업데이트
+
+전체 `schema.sql`을 다시 실행하지 않고 아래 마이그레이션을 파일명 순서대로 실행합니다.
+
+1. [`20261001_add_stage_scheduled_time.sql`](./supabase/migrations/20261001_add_stage_scheduled_time.sql)
+2. [`20261005_add_application_period_times.sql`](./supabase/migrations/20261005_add_application_period_times.sql)
+3. [`20261005_create_memo_images_bucket.sql`](./supabase/migrations/20261005_create_memo_images_bucket.sql)
+
+각 파일은 `SQL Editor → New query`에서 한 번씩 실행합니다. 마지막 파일은 5MB 이하의 JPEG·PNG·GIF·WebP만 허용하고, 로그인 사용자가 자신의 UUID 폴더에 있는 이미지만 읽고 쓸 수 있도록 설정합니다.
 
 ### 검증
 
