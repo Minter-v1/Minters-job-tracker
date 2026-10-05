@@ -105,7 +105,7 @@ npm run dev
 ApplyLog는 **운영자 소유의 Supabase 프로젝트 하나**를 사용합니다. 일반 사용자는 Supabase를 직접 연결하지 않으며, 가입 요청 후 관리자의 승인을 받은 사람만 초대 메일을 통해 계정을 활성화합니다.
 
 > [!NOTE]
-> Supabase 설정 자료는 준비되어 있지만 현재 화면의 데이터 처리는 아직 `localStorage`를 사용합니다. Auth와 Supabase CRUD 코드가 적용되기 전까지 환경변수만 등록해도 저장 방식이 자동으로 바뀌지는 않습니다.
+> 현재 화면은 Supabase Auth·Database·Storage를 사용합니다. 환경변수 등록과 SQL 적용이 모두 끝나야 로그인, 지원 정보 저장, 메모 이미지 업로드가 정상 동작합니다.
 
 <details>
 <summary><strong>Supabase 준비 과정 펼쳐보기</strong></summary>
