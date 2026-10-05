@@ -57,7 +57,9 @@ create table if not exists public.applications (
   company text not null check (char_length(trim(company)) > 0),
   role text not null check (char_length(trim(role)) > 0),
   start_date date,
+  start_time time,
   deadline date not null,
+  deadline_time time,
   status text not null default '준비 중'
     check (status in ('관심', '준비 중', '지원 완료', '서류 합격', '면접', '최종 합격', '불합격')),
   current_step text not null default '지원 준비'
@@ -69,7 +71,9 @@ create table if not exists public.applications (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint applications_recruitment_period_check
-    check (start_date is null or start_date <= deadline)
+    check (start_date is null or start_date <= deadline),
+  constraint applications_recruitment_time_check
+    check (start_date is null or start_date <> deadline or start_time is null or deadline_time is null or start_time <= deadline_time)
 );
 
 create table if not exists public.application_tasks (
