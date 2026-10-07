@@ -9,10 +9,13 @@ import { createClient } from "@/lib/supabase/client";
 import { ASSESSMENT_TYPES, Job, JobDraft, JobStage, PROCESS_STEPS, ProcessStep } from "@/types/job";
 
 const emptyDraft: JobDraft = { company: "", role: "", startDate: null, startTime: null, deadline: "", deadlineTime: null, currentStep: "지원 준비", assessments: [], link: "" };
-type Filter = "전체" | "마감 임박" | "지원 준비" | "전형 진행" | "면접";
+type StageFilter = "전체" | "마감 임박" | "지원 준비" | "전형 진행" | "면접";
+type StateFilter = "전체 상태" | "진행 중" | "최종 합격" | "불합격" | "지원 취소";
 type ViewMode = "목록" | "캘린더";
 type DateSort = "nearest" | "latest";
-const filters: Filter[] = ["전체", "마감 임박", "지원 준비", "전형 진행", "면접"];
+const stageFilters: StageFilter[] = ["전체", "마감 임박", "지원 준비", "전형 진행", "면접"];
+const stateFilters: StateFilter[] = ["전체 상태", "진행 중", "최종 합격", "불합격", "지원 취소"];
+const TERMINAL_STEPS = ["최종 합격", "불합격", "지원 취소"];
 
 function localDate(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function dayDiff(date: string) { const today = new Date(); today.setHours(0, 0, 0, 0); return Math.ceil((new Date(`${date}T00:00:00`).getTime() - today.getTime()) / 86400000); }
@@ -35,17 +38,21 @@ function isInvalidPeriod(startDate: string | null, startTime: string | null, end
 function initials(company: string) { return company.replace(/[^a-zA-Z가-힣]/g, "").slice(0, 2).toUpperCase(); }
 function progress(job: Job) { if (job.stages.length) return Math.round(job.stages.filter((stage) => stage.completed).length / job.stages.length * 100); const index = PROCESS_STEPS.indexOf(job.currentStep as (typeof PROCESS_STEPS)[number]); return index < 0 ? 0 : Math.round(((index + 1) / PROCESS_STEPS.length) * 100); }
 function nextStage(job: Job) {
+  if (TERMINAL_STEPS.includes(job.currentStep)) return null;
   const currentPosition = job.stages.find((stage) => stage.title === job.currentStep)?.position ?? -1;
   return job.stages
     .filter((stage) => !stage.completed && stage.position >= currentPosition && stage.scheduledDate && dayDiff(stage.scheduledDate) >= 0)
     .sort((a, b) => `${a.scheduledDate}T${a.scheduledTime ?? "23:59"}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime ?? "23:59"}`))[0] ?? null;
 }
 function emptyScheduleLabel(job: Job) {
+  if (job.currentStep === "지원 취소") return "지원 취소";
+  if (job.currentStep === "불합격") return "전형 종료";
+  if (job.currentStep === "최종 합격") return "최종 합격";
   const current = job.stages.find((stage) => stage.title === job.currentStep);
   return current?.scheduledDate && dayDiff(current.scheduledDate) < 0 && !current.completed ? "결과 대기" : "일정 미등록";
 }
 function currentStepOptions(job: Job) { return Array.from(new Set([...job.stages.map((stage) => stage.title), ...PROCESS_STEPS])); }
-function relevantScheduleDate(job: Job) { return job.currentStep === "지원 준비" ? job.deadline : nextStage(job)?.scheduledDate ?? null; }
+function relevantScheduleDate(job: Job) { return TERMINAL_STEPS.includes(job.currentStep) ? null : job.currentStep === "지원 준비" ? job.deadline : nextStage(job)?.scheduledDate ?? null; }
 function companyColorKey(company: string) { return company.trim().toLocaleLowerCase("ko-KR"); }
 function companyColorMap(jobs: Job[]) {
   const companies = Array.from(new Set(jobs.map((job) => companyColorKey(job.company)))).sort((a, b) => a.localeCompare(b, "ko"));
@@ -59,6 +66,7 @@ function calendarColor(hue: number, completed: boolean) {
   };
 }
 function applicationState(job: Job) {
+  if (job.currentStep === "지원 취소") return { label: "지원 취소", className: "border-slate-300 bg-slate-100 text-slate-600" };
   if (job.currentStep === "불합격") return { label: "불합격", className: "border-rose-200 bg-rose-50 text-rose-600" };
   if (job.currentStep === "최종 합격") return { label: "최종 합격", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
   return { label: "진행 중", className: "border-cyan-200 bg-cyan-50 text-cyan-700" };
@@ -71,7 +79,8 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [saveError, setSaveError] = useState("");
   const [pendingWrites, setPendingWrites] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
-  const [filter, setFilter] = useState<Filter>("전체");
+  const [stageFilter, setStageFilter] = useState<StageFilter>("전체");
+  const [stateFilter, setStateFilter] = useState<StateFilter>("전체 상태");
   const [dateSort, setDateSort] = useState<DateSort>("nearest");
   const [viewMode, setViewMode] = useState<ViewMode>("목록");
   const [query, setQuery] = useState("");
@@ -98,17 +107,19 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
 
   const selected = jobs.find((job) => job.id === selectedId) ?? null;
   const stats = useMemo(() => ({
-    total: jobs.filter((job) => !["최종 합격", "불합격"].includes(job.currentStep)).length,
+    total: jobs.filter((job) => !TERMINAL_STEPS.includes(job.currentStep)).length,
     urgent: jobs.filter((job) => job.currentStep === "지원 준비" && dayDiff(job.deadline) >= 0 && dayDiff(job.deadline) <= 3).length,
     tests: jobs.filter((job) => ["코딩테스트", "인적성", "AI 역량검사"].includes(job.currentStep)).length,
     interviews: jobs.filter((job) => job.currentStep.includes("면접")).length,
   }), [jobs]);
   const visible = useMemo(() => [...jobs].filter((job) => {
     if (!`${job.company} ${job.role}`.toLowerCase().includes(query.toLowerCase())) return false;
-    if (filter === "마감 임박") return job.currentStep === "지원 준비" && dayDiff(job.deadline) >= 0 && dayDiff(job.deadline) <= 3;
-    if (filter === "지원 준비") return job.currentStep === "지원 준비";
-    if (filter === "전형 진행") return !["지원 준비", "최종 합격", "불합격"].includes(job.currentStep);
-    if (filter === "면접") return job.currentStep.includes("면접");
+    const state = applicationState(job).label;
+    if (stateFilter !== "전체 상태" && state !== stateFilter) return false;
+    if (stageFilter === "마감 임박") return job.currentStep === "지원 준비" && dayDiff(job.deadline) >= 0 && dayDiff(job.deadline) <= 3;
+    if (stageFilter === "지원 준비") return job.currentStep === "지원 준비";
+    if (stageFilter === "전형 진행") return !["지원 준비", ...TERMINAL_STEPS].includes(job.currentStep);
+    if (stageFilter === "면접") return job.currentStep.includes("면접");
     return true;
   }).sort((a, b) => {
     const aDate = relevantScheduleDate(a); const bDate = relevantScheduleDate(b);
@@ -119,7 +130,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     const aPast = dayDiff(aDate) < 0; const bPast = dayDiff(bDate) < 0;
     if (aPast !== bPast) return aPast ? 1 : -1;
     return aPast ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
-  }), [dateSort, filter, jobs, query]);
+  }), [dateSort, jobs, query, stageFilter, stateFilter]);
 
   async function runWrite<T>(work: () => Promise<T>): Promise<T | null> { setPendingWrites((count) => count + 1); setSaveError(""); try { return await work(); } catch { setSaveError("변경사항을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."); return null; } finally { setPendingWrites((count) => Math.max(0, count - 1)); } }
   function persistApplication(id: string, changes: Partial<Job>) { const applicationChanges = { ...changes }; delete applicationChanges.tasks; delete applicationChanges.stages; if (Object.keys(applicationChanges).length) void runWrite(() => updateApplication(createClient(), id, applicationChanges)); }
@@ -169,7 +180,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     <main className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10"><div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">기업별 전형 과정과 일정을 한눈에 관리하세요.</p></div><p className={`text-xs ${saveError ? "text-rose-500" : "text-slate-400"}`}>{saveError || (pendingWrites ? "저장 중..." : "저장됨")}</p></div>
       <section className="mb-5 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4">{[["진행 중", stats.total], ["3일 내 지원 마감", stats.urgent], ["검사 진행", stats.tests], ["면접 단계", stats.interviews]].map(([label, value], index) => <div key={String(label)} className="flex items-baseline gap-2"><p className="text-xs text-slate-500">{label}</p><p className={`text-lg font-bold ${index === 1 && Number(value) ? "text-rose-500" : ""}`}>{value}</p></div>)}</section>
       <ViewToggle value={viewMode} onChange={setViewMode}/>
-      {viewMode === "목록" ? <JobList jobs={jobs} visible={visible} filter={filter} setFilter={setFilter} dateSort={dateSort} setDateSort={setDateSort} query={query} setQuery={setQuery} onSelect={setSelectedId} onStepChange={(id, step) => updateJob(id, { currentStep: step })}/> : <CalendarView jobs={jobs} month={calendarMonth} setMonth={setCalendarMonth} onSelect={setSelectedId}/>}
+      {viewMode === "목록" ? <JobList jobs={jobs} visible={visible} stageFilter={stageFilter} setStageFilter={setStageFilter} stateFilter={stateFilter} setStateFilter={setStateFilter} dateSort={dateSort} setDateSort={setDateSort} query={query} setQuery={setQuery} onSelect={setSelectedId} onStepChange={(id, step) => updateJob(id, { currentStep: step })}/> : <CalendarView jobs={jobs} month={calendarMonth} setMonth={setCalendarMonth} onSelect={setSelectedId}/>}
     </main>
     {isAddOpen && <AddModal draft={draft} setDraft={setDraft} onClose={() => setIsAddOpen(false)} onSubmit={addJob} isSaving={pendingWrites > 0}/>}
     {selected && <Detail key={selected.id} job={selected} onClose={() => setSelectedId(null)} onUpdate={(changes) => updateJob(selected.id, changes)} onDelete={() => deleteJob(selected.id)} newTask={newTask} setNewTask={setNewTask} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={removeTask} newStage={newStage} setNewStage={setNewStage} onAddStage={addStage} onPatchStage={patchStage} onDeleteStage={removeStage} onMoveStage={moveStage} isSaving={pendingWrites > 0}/>}
@@ -187,7 +198,7 @@ function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (mode: Vie
   </div>;
 }
 
-function JobList({ jobs, visible, filter, setFilter, dateSort, setDateSort, query, setQuery, onSelect, onStepChange }: { jobs: Job[]; visible: Job[]; filter: Filter; setFilter: (filter: Filter) => void; dateSort: DateSort; setDateSort: (sort: DateSort) => void; query: string; setQuery: (query: string) => void; onSelect: (id: string) => void; onStepChange: (id: string, step: string) => void }) { return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="flex flex-col gap-3 border-b border-slate-200 p-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex gap-1 overflow-x-auto">{filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${filter === item ? "bg-cyan-700 text-white shadow-sm" : "text-slate-500 hover:bg-cyan-50 hover:text-cyan-800"}`}>{item}</button>)}</div><div className="flex gap-2"><button type="button" onClick={() => setDateSort(dateSort === "nearest" ? "latest" : "nearest")} className="outline-button shrink-0" aria-label={`일정 ${dateSort === "nearest" ? "최신순" : "임박순"}으로 변경`}><SortIcon className={`size-4 transition-transform ${dateSort === "latest" ? "rotate-180" : ""}`}/>{dateSort === "nearest" ? "일정 임박순" : "일정 최신순"}</button><label className="relative min-w-0 flex-1 lg:w-72"><SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400"/><input value={query} onChange={(event) => setQuery(event.target.value)} className="plain-field pl-9" placeholder="기업명 또는 직무 검색"/></label></div></div><div className="hidden grid-cols-[90px_minmax(170px,1.15fr)_140px_minmax(190px,1.25fr)_140px_110px_28px] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-[10px] font-bold text-slate-400 md:grid"><span>지원 상태</span><span>기업 / 직무</span><span>현재 단계</span><span>전형 방식</span><span>예정 일정</span><span>전체 과정</span><span/></div>{visible.length ? <div className="divide-y divide-slate-100">{visible.map((job) => <JobRow key={job.id} job={job} onSelect={() => onSelect(job.id)} onStepChange={(step) => onStepChange(job.id, step)}/>)}</div> : <div className="px-6 py-20 text-center"><p className="font-bold">{jobs.length ? "해당하는 지원이 없습니다." : "아직 등록한 지원이 없습니다."}</p></div>}</section>; }
+function JobList({ jobs, visible, stageFilter, setStageFilter, stateFilter, setStateFilter, dateSort, setDateSort, query, setQuery, onSelect, onStepChange }: { jobs: Job[]; visible: Job[]; stageFilter: StageFilter; setStageFilter: (filter: StageFilter) => void; stateFilter: StateFilter; setStateFilter: (filter: StateFilter) => void; dateSort: DateSort; setDateSort: (sort: DateSort) => void; query: string; setQuery: (query: string) => void; onSelect: (id: string) => void; onStepChange: (id: string, step: string) => void }) { return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="flex flex-col gap-3 border-b border-slate-200 p-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex gap-1 overflow-x-auto">{stageFilters.map((item) => <button key={item} onClick={() => setStageFilter(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${stageFilter === item ? "bg-cyan-700 text-white shadow-sm" : "text-slate-500 hover:bg-cyan-50 hover:text-cyan-800"}`}>{item}</button>)}</div><div className="flex flex-wrap gap-2 sm:flex-nowrap"><label className="relative min-w-36"><span className="sr-only">지원 상태 필터</span><select value={stateFilter} onChange={(event) => setStateFilter(event.target.value as StateFilter)} className="plain-field pr-8">{stateFilters.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><button type="button" onClick={() => setDateSort(dateSort === "nearest" ? "latest" : "nearest")} className="outline-button shrink-0" aria-label={`일정 ${dateSort === "nearest" ? "최신순" : "임박순"}으로 변경`}><SortIcon className={`size-4 transition-transform ${dateSort === "latest" ? "rotate-180" : ""}`}/>{dateSort === "nearest" ? "일정 임박순" : "일정 최신순"}</button><label className="relative min-w-0 flex-1 lg:w-72"><SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400"/><input value={query} onChange={(event) => setQuery(event.target.value)} className="plain-field pl-9" placeholder="기업명 또는 직무 검색"/></label></div></div><div className="hidden grid-cols-[90px_minmax(170px,1.15fr)_140px_minmax(190px,1.25fr)_140px_110px_28px] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-[10px] font-bold text-slate-400 md:grid"><span>지원 상태</span><span>기업 / 직무</span><span>현재 단계</span><span>전형 방식</span><span>예정 일정</span><span>전체 과정</span><span/></div>{visible.length ? <div className="divide-y divide-slate-100">{visible.map((job) => <JobRow key={job.id} job={job} onSelect={() => onSelect(job.id)} onStepChange={(step) => onStepChange(job.id, step)}/>)}</div> : <div className="px-6 py-20 text-center"><p className="font-bold">{jobs.length ? "해당하는 지원이 없습니다." : "아직 등록한 지원이 없습니다."}</p></div>}</section>; }
 
 function JobRow({ job, onSelect, onStepChange }: { job: Job; onSelect: () => void; onStepChange: (step: ProcessStep) => void }) {
   const percent = progress(job); const next = nextStage(job); const preparing = job.currentStep === "지원 준비";
@@ -235,7 +246,8 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
   const days = Array.from({ length: 42 }, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return date; });
   const weeks = Array.from({ length: 6 }, (_, index) => days.slice(index * 7, index * 7 + 7));
   const visibleJobs = jobs.filter((job) => !hiddenCompanyKeys.includes(companyColorKey(job.company)));
-  const events: CalendarEvent[] = visibleJobs.flatMap((job) => {
+  const scheduledJobs = visibleJobs.filter((job) => job.currentStep !== "지원 취소");
+  const events: CalendarEvent[] = scheduledJobs.flatMap((job) => {
     const deadlineEvents: CalendarEvent[] = job.startDate ? [] : [{ date: job.deadline, time: null, title: "지원 마감", job, completed: job.currentStep !== "지원 준비", kind: "deadline" }];
     const stageEvents: CalendarEvent[] = job.stages
       .filter((stage) => stage.title !== "지원 준비" && stage.scheduledDate)
@@ -255,7 +267,7 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
       <div className="min-w-[720px]">
         <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">{["일", "월", "화", "수", "목", "금", "토"].map((day) => <div key={day} className="px-2 py-2 text-center text-[10px] font-bold text-slate-400">{day}</div>)}</div>
         <div>{weeks.map((week) => {
-          const segments = periodSegmentsForWeek(visibleJobs, week);
+          const segments = periodSegmentsForWeek(scheduledJobs, week);
           const laneCount = segments.length ? Math.max(...segments.map((segment) => segment.lane)) + 1 : 0;
           return <div key={localDate(week[0])} className="relative grid grid-cols-7 border-b border-slate-100">{week.map((date) => {
             const key = localDate(date);
