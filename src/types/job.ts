@@ -8,5 +8,5 @@ export const EMPLOYMENT_TYPES = ["정규직", "계약직", "인턴"] as const;
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 export type JobTask = { id: string; label: string; done: boolean };
 export type JobStage = { id: string; title: string; scheduledDate: string | null; scheduledTime: string | null; completed: boolean; position: number };
-export type Job = { id: string; company: string; role: string; startDate: string | null; startTime: string | null; deadline: string; deadlineTime: string | null; status: JobStatus; currentStep: ProcessStep; assessments: AssessmentType[]; link: string; memo: string; tasks: JobTask[]; stages: JobStage[]; createdAt: string };
-export type JobDraft = Pick<Job, "company" | "role" | "startDate" | "startTime" | "deadline" | "deadlineTime" | "currentStep" | "assessments" | "link">;
+export type Job = { id: string; company: string; role: string; employmentType: EmploymentType | null; startDate: string | null; startTime: string | null; deadline: string; deadlineTime: string | null; status: JobStatus; currentStep: ProcessStep; assessments: AssessmentType[]; link: string; memo: string; tasks: JobTask[]; stages: JobStage[]; createdAt: string };
+export type JobDraft = Pick<Job, "company" | "role" | "employmentType" | "startDate" | "startTime" | "deadline" | "deadlineTime" | "currentStep" | "assessments" | "link">;
