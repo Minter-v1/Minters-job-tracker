@@ -224,6 +224,22 @@ function ApplicationStateBadge({ job }: { job: Job }) {
 
 type CalendarEvent = { date: string; time: string | null; title: string; job: Job; completed: boolean; kind: "deadline" | "stage" };
 type CalendarPeriodSegment = { job: Job; completed: boolean; startColumn: number; endColumn: number; lane: number; continuesLeft: boolean; continuesRight: boolean };
+type TodayScheduleItem = { job: Job; stages: JobStage[]; inApplicationPeriod: boolean; urgencyDays: number; time: string | null };
+
+function getTodayScheduleItems(jobs: Job[], today: string): TodayScheduleItem[] {
+  return jobs.flatMap((job) => {
+    if (job.currentStep === "지원 취소") return [];
+    const stages = job.stages
+      .filter((stage) => stage.title !== "지원 준비" && stage.scheduledDate === today)
+      .sort((a, b) => (a.scheduledTime ?? "23:59").localeCompare(b.scheduledTime ?? "23:59") || a.position - b.position);
+    const inApplicationPeriod = job.startDate ? job.startDate <= today && job.deadline >= today : job.deadline === today;
+    if (!inApplicationPeriod && stages.length === 0) return [];
+    const exactToday = stages.length > 0 || job.deadline === today;
+    const urgencyDays = exactToday ? 0 : Math.max(0, dayDiff(job.deadline));
+    const time = stages[0]?.scheduledTime ?? (job.deadline === today ? job.deadlineTime : null);
+    return [{ job, stages, inApplicationPeriod, urgencyDays, time }];
+  }).sort((a, b) => a.urgencyDays - b.urgencyDays || (a.time ?? "23:59").localeCompare(b.time ?? "23:59") || a.job.company.localeCompare(b.job.company, "ko"));
+}
 
 function periodSegmentsForWeek(jobs: Job[], week: Date[]): CalendarPeriodSegment[] {
   const weekStart = localDate(week[0]);
@@ -251,6 +267,7 @@ function periodSegmentsForWeek(jobs: Job[], week: Date[]): CalendarPeriodSegment
 function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month: Date; setMonth: (date: Date) => void; onSelect: (id: string) => void }) {
   const [highlightedPeriodId, setHighlightedPeriodId] = useState<string | null>(null);
   const [hiddenCompanyKeys, setHiddenCompanyKeys] = useState<string[]>([]);
+  const [isTodayOpen, setIsTodayOpen] = useState(false);
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const start = new Date(first);
   start.setDate(1 - first.getDay());
@@ -266,12 +283,13 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
     return [...deadlineEvents, ...stageEvents];
   });
   const today = localDate(new Date());
+  const todayItems = getTodayScheduleItems(scheduledJobs, today);
   const colors = companyColorMap(jobs);
   const companies = Array.from(new Map(jobs.map((job) => [companyColorKey(job.company), job.company])).entries())
     .sort(([, a], [, b]) => a.localeCompare(b, "ko"));
 
   return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-    <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5"><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><div className="flex items-center gap-3"><h2 className="text-sm font-bold">{month.getFullYear()}년 {month.getMonth() + 1}월</h2><button className="text-xs font-semibold text-cyan-600" onClick={() => { const date = new Date(); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); }}>오늘</button></div><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div>
+    <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5"><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><div className="flex items-center gap-3"><h2 className="text-sm font-bold">{month.getFullYear()}년 {month.getMonth() + 1}월</h2><button className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1.5 text-xs font-bold text-cyan-700 transition-colors hover:border-cyan-300 hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40" onClick={() => { const date = new Date(); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); setIsTodayOpen(true); }}>오늘<span className="ml-1 text-[10px] text-cyan-600/70">{todayItems.length}</span></button></div><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div>
     {companies.length > 0 && <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-100 px-4 py-2.5 sm:px-5" aria-label="기업별 일정 필터"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 필터</span>{hiddenCompanyKeys.length > 0 && <button type="button" onClick={() => setHiddenCompanyKeys([])} className="shrink-0 text-[10px] font-bold text-cyan-700 hover:text-cyan-900">전체 선택</button>}{companies.map(([key, company]) => { const checked = !hiddenCompanyKeys.includes(key); return <label key={key} className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold transition-colors ${checked ? "border-slate-200 bg-white text-slate-700 hover:border-slate-300" : "border-transparent bg-slate-100 text-slate-400 hover:text-slate-600"}`}><input type="checkbox" className="sr-only" checked={checked} onChange={() => setHiddenCompanyKeys((current) => checked ? [...current, key] : current.filter((item) => item !== key))}/><span className="flex size-3 items-center justify-center rounded-[3px]" style={{ backgroundColor: checked ? `hsl(${colors.get(key) ?? 192} 72% 72%)` : "rgb(203 213 225)" }}>{checked && <CheckIcon className="size-2 text-slate-700"/>}</span>{company}</label>; })}</div>}
     {visibleJobs.length > 0 && <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 sm:px-5" aria-label="기업별 지원 현황"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 현황</span>{[...visibleJobs].sort((a, b) => a.company.localeCompare(b.company, "ko")).map((job) => { const state = calendarApplicationState(job); const showCurrentStep = state.label !== job.currentStep; return <button key={job.id} type="button" onClick={() => onSelect(job.id)} aria-label={`${job.company} ${state.label}${showCurrentStep ? `, 현재 단계 ${job.currentStep}` : ""}`} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"><span className="size-2 rounded-full" style={{ backgroundColor: `hsl(${colors.get(companyColorKey(job.company)) ?? 192} 72% 64%)` }}/><span className="max-w-28 truncate text-[10px] font-bold text-slate-700">{job.company}</span><span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${state.className}`}>{state.label}</span>{showCurrentStep && <span className="text-[9px] font-semibold text-slate-500">{job.currentStep}</span>}</button>; })}</div>}
     <div className="overflow-x-auto">
@@ -289,7 +307,39 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
         })}</div>
       </div>
     </div>
+    {isTodayOpen && <TodaySchedulePanel
+      items={todayItems}
+      today={today}
+      colors={colors}
+      onClose={() => setIsTodayOpen(false)}
+      onSelect={(id) => { setIsTodayOpen(false); onSelect(id); }}
+    />}
   </section>;
+}
+
+function TodaySchedulePanel({ items, today, colors, onClose, onSelect }: { items: TodayScheduleItem[]; today: string; colors: Map<string, number>; onClose: () => void; onSelect: (id: string) => void }) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) { if (event.key === "Escape") onClose(); }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+  const dateLabel = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" }).format(new Date(`${today}T00:00:00`));
+  return <div className="fixed inset-0 z-50 bg-slate-950/20" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <aside role="dialog" aria-modal="true" aria-labelledby="today-schedule-title" className="today-panel-in absolute inset-x-0 bottom-0 max-h-[82vh] overflow-y-auto rounded-t-[24px] bg-white shadow-2xl sm:inset-y-3 sm:left-auto sm:right-3 sm:max-h-none sm:w-[440px] sm:rounded-[24px]">
+      <div className="sticky top-0 z-10 border-b border-slate-100 bg-white px-5 py-4 sm:px-6">
+        <div className="flex items-start justify-between gap-4"><div><p className="mb-1 text-[10px] font-bold uppercase tracking-[.14em] text-cyan-600">Today</p><h2 id="today-schedule-title" className="text-xl font-bold tracking-[-.025em]">오늘 일정</h2><p className="mt-1 text-xs text-slate-400">{dateLabel} · 마감이 가까운 순</p></div><button autoFocus onClick={onClose} className="square-button" aria-label="오늘 일정 닫기"><CloseIcon className="size-5"/></button></div>
+      </div>
+      <div className="p-4 sm:p-5">{items.length > 0 ? <div className="space-y-2.5">{items.map((item) => {
+        const hue = colors.get(companyColorKey(item.job.company)) ?? 192;
+        const scheduleTitle = item.stages.length ? item.stages.map((stage) => stage.title).join(" · ") : "지원 접수 중";
+        const scheduleTime = item.stages.length ? item.stages.map((stage) => stage.scheduledTime ? formatTime(stage.scheduledTime) : "시각 미등록").join(" · ") : item.job.deadline === today ? (item.job.deadlineTime ? formatTime(item.job.deadlineTime) : "시각 미등록") : `마감 ${formatDateTime(item.job.deadline, item.job.deadlineTime)}`;
+        const urgencyLabel = item.urgencyDays === 0 ? "D-DAY" : `D-${item.urgencyDays}`;
+        return <button key={item.job.id} type="button" onClick={() => onSelect(item.job.id)} className="group w-full border border-slate-200 bg-white p-4 text-left transition-[border-color,background-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-cyan-50/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40">
+          <div className="flex items-start gap-3"><span className="mt-1 size-2.5 shrink-0 rounded-full" style={{ backgroundColor: `hsl(${hue} 72% 58%)` }}/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-800">{item.job.company}</p><p className="mt-0.5 truncate text-xs text-slate-400">{item.job.role}</p></div><span className={`shrink-0 text-xs font-black ${item.urgencyDays === 0 ? "text-rose-500" : "text-cyan-700"}`}>{urgencyLabel}</span></div><div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3"><div className="min-w-0"><p className="truncate text-xs font-bold text-slate-700">{scheduleTitle}</p><p className="mt-0.5 truncate text-[10px] text-slate-400">{scheduleTime}</p></div><span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-500 group-hover:bg-white">{item.job.currentStep}</span></div></div></div>
+        </button>;
+      })}</div> : <div className="grid min-h-64 place-items-center px-6 text-center"><div><div className="mx-auto flex size-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><CalendarIcon className="size-5"/></div><p className="mt-4 text-sm font-bold text-slate-700">오늘 예정된 일정이 없습니다.</p><p className="mt-1 text-xs leading-5 text-slate-400">접수 기간 또는 전형 일정이 오늘과 겹치면<br/>이곳에 표시됩니다.</p></div></div>}</div>
+    </aside>
+  </div>;
 }
 
 function CalendarPeriodBar({ segment, hue, highlighted, onHighlight, onSelect }: { segment: CalendarPeriodSegment; hue: number; highlighted: boolean; onHighlight: (id: string | null) => void; onSelect: (id: string) => void }) {
