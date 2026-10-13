@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { logout } from "@/app/auth/actions";
-import { BriefcaseIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, ExternalIcon, PlusIcon, SearchIcon, SortIcon, TrashIcon } from "@/components/icons";
+import { BriefcaseIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, ExternalIcon, PencilIcon, PlusIcon, SearchIcon, SortIcon, TrashIcon } from "@/components/icons";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { createApplication, createApplicationStage, createApplicationTask, deleteApplication, deleteApplicationStage, deleteApplicationTask, loadApplications, updateApplication, updateApplicationStage, updateApplicationTask } from "@/lib/supabase/applications";
 import { createClient } from "@/lib/supabase/client";
@@ -434,18 +434,47 @@ function Detail({ job, onClose, onUpdate, onDelete, newTask, setNewTask, onAddTa
 
 function StageTitleInput({ stage, onCommit }: { stage: JobStage; onCommit: (title: string) => void }) {
   const [title, setTitle] = useState(stage.title);
+  const [isEditing, setIsEditing] = useState(false);
+  const isComposing = useRef(false);
+  const pendingBlur = useRef(false);
 
-  function commit() {
-    const nextTitle = title.trim();
+  function commit(rawTitle = title) {
+    const nextTitle = rawTitle.trim();
     if (!nextTitle) {
       setTitle(stage.title);
+      setIsEditing(false);
       return;
     }
     setTitle(nextTitle);
     if (nextTitle !== stage.title) onCommit(nextTitle);
+    setIsEditing(false);
   }
 
-  return <input aria-label={`${stage.title} 단계명`} value={title} maxLength={40} onChange={(event) => setTitle(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur(); }} className={`min-w-0 border-0 bg-transparent text-xs font-semibold outline-none ${stage.completed ? "text-slate-300 line-through" : ""}`}/>;
+  function cancel() {
+    setTitle(stage.title);
+    setIsEditing(false);
+  }
+
+  if (!isEditing) return <button type="button" onClick={() => setIsEditing(true)} aria-label={`${stage.title} 단계명 수정`} className={`group/title flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${stage.completed ? "text-slate-300 line-through" : "text-slate-700"}`}><span className="truncate">{stage.title}</span><PencilIcon className="size-3 shrink-0 text-slate-300 transition-colors group-hover/title:text-slate-500"/></button>;
+
+  return <div className="flex min-w-0 items-center gap-1 rounded-lg border border-cyan-300 bg-white px-1.5 focus-within:ring-2 focus-within:ring-cyan-500/20" onBlur={(event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    if (isComposing.current) { pendingBlur.current = true; return; }
+    commit();
+  }}>
+    <input autoFocus aria-label={`${stage.title} 단계명 편집`} value={title} maxLength={40} onChange={(event) => setTitle(event.target.value)} onCompositionStart={() => { isComposing.current = true; }} onCompositionEnd={(event) => {
+      isComposing.current = false;
+      const nextTitle = event.currentTarget.value;
+      setTitle(nextTitle);
+      if (pendingBlur.current) { pendingBlur.current = false; commit(nextTitle); }
+    }} onKeyDown={(event) => {
+      if (event.nativeEvent.isComposing || isComposing.current) return;
+      if (event.key === "Enter") { event.preventDefault(); commit(event.currentTarget.value); }
+      if (event.key === "Escape") { event.preventDefault(); cancel(); }
+    }} className={`min-w-0 flex-1 border-0 bg-transparent px-1 py-1.5 text-xs font-semibold outline-none ${stage.completed ? "text-slate-300 line-through" : "text-slate-700"}`}/>
+    <button type="button" onClick={() => commit()} aria-label="단계명 저장" className="flex size-6 shrink-0 items-center justify-center rounded-md text-cyan-700 hover:bg-cyan-50"><CheckIcon className="size-3.5"/></button>
+    <button type="button" onClick={cancel} aria-label="단계명 수정 취소" className="flex size-6 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600"><CloseIcon className="size-3.5"/></button>
+  </div>;
 }
 
 function StageScheduleFields({ stage, onChange }: { stage: JobStage; onChange: (changes: Partial<JobStage>) => void }) {
