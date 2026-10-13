@@ -73,11 +73,11 @@ function applicationState(job: Job) {
 }
 
 function calendarApplicationState(job: Job) {
-  if (job.currentStep === "지원 준비") return { label: "제출 전", className: "border-amber-200 bg-amber-50 text-amber-700" };
-  if (job.currentStep === "지원 취소") return { label: "지원 취소", className: "border-slate-300 bg-slate-100 text-slate-600" };
-  if (job.currentStep === "불합격") return { label: "불합격", className: "border-rose-200 bg-rose-50 text-rose-600" };
-  if (job.currentStep === "최종 합격") return { label: "최종 합격", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
-  return { label: "전형 진행", className: "border-cyan-200 bg-cyan-50 text-cyan-700" };
+  if (job.currentStep === "지원 준비") return { label: "제출 전", tone: "pending" as const };
+  if (job.currentStep === "지원 취소") return { label: "지원 취소", tone: "cancelled" as const };
+  if (job.currentStep === "불합격") return { label: "불합격", tone: "rejected" as const };
+  if (job.currentStep === "최종 합격") return { label: "최종 합격", tone: "accepted" as const };
+  return { label: "제출 완료", tone: "submitted" as const };
 }
 
 export function JobDashboard({ userEmail }: { userEmail: string }) {
@@ -233,6 +233,20 @@ function ApplicationStateBadge({ job }: { job: Job }) {
   return <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-bold ${state.className}`}>{icon}{state.label}</span>;
 }
 
+type CalendarApplicationState = ReturnType<typeof calendarApplicationState>;
+
+function CalendarStateMark({ state, className = "" }: { state: CalendarApplicationState; className?: string }) {
+  const Icon = state.tone === "pending" ? ClockIcon : state.tone === "submitted" || state.tone === "accepted" ? CheckIcon : CloseIcon;
+  const toneClass = {
+    pending: "text-amber-700",
+    submitted: "text-cyan-800",
+    accepted: "text-emerald-700",
+    rejected: "text-rose-600",
+    cancelled: "text-slate-500",
+  }[state.tone];
+  return <span className={`inline-flex min-w-0 shrink-0 items-center gap-1 text-[9px] font-bold ${toneClass} ${className}`}><Icon className="size-3 shrink-0"/><span className="truncate">{state.label}</span></span>;
+}
+
 type CalendarEvent = { date: string; time: string | null; title: string; job: Job; completed: boolean; kind: "deadline" | "stage" };
 type CalendarPeriodSegment = { job: Job; completed: boolean; startColumn: number; endColumn: number; lane: number; continuesLeft: boolean; continuesRight: boolean };
 type TodayScheduleItem = { job: Job; stages: JobStage[]; inApplicationPeriod: boolean; urgencyDays: number; time: string | null };
@@ -307,7 +321,7 @@ function CalendarView({ jobs, month, setMonth, onSelect }: { jobs: Job[]; month:
   return <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
     <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5"><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><div className="flex items-center gap-3"><h2 className="text-sm font-bold">{month.getFullYear()}년 {month.getMonth() + 1}월</h2><button ref={todayButtonRef} aria-haspopup="dialog" aria-expanded={isTodayOpen} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1.5 text-xs font-bold text-cyan-700 transition-colors hover:border-cyan-300 hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40" onClick={() => { const date = new Date(); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); setIsTodayOpen(true); }}>오늘<span className="ml-1 text-[10px] text-cyan-600/70">{todayItems.length}</span></button></div><button className="square-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div>
     {companies.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2.5 sm:px-5" aria-label="기업별 일정 필터"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 필터</span>{hiddenCompanyKeys.length > 0 && <button type="button" onClick={() => setHiddenCompanyKeys([])} className="shrink-0 text-[10px] font-bold text-cyan-700 hover:text-cyan-900">전체 선택</button>}{companies.map(([key, company]) => { const checked = !hiddenCompanyKeys.includes(key); return <label key={key} className={`flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold transition-colors ${checked ? "border-slate-200 bg-white text-slate-700 hover:border-slate-300" : "border-transparent bg-slate-100 text-slate-400 hover:text-slate-600"}`}><input type="checkbox" className="sr-only" checked={checked} onChange={() => setHiddenCompanyKeys((current) => checked ? [...current, key] : current.filter((item) => item !== key))}/><span className="flex size-3 shrink-0 items-center justify-center rounded-[3px]" style={{ backgroundColor: checked ? `hsl(${colors.get(key) ?? 192} 72% 72%)` : "rgb(203 213 225)" }}>{checked && <CheckIcon className="size-2 text-slate-700"/>}</span><span className="max-w-28 truncate">{company}</span></label>; })}</div>}
-    {visibleJobs.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 sm:px-5" aria-label="기업별 지원 현황"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 현황</span>{[...visibleJobs].sort((a, b) => a.company.localeCompare(b.company, "ko")).map((job) => { const state = calendarApplicationState(job); const showCurrentStep = state.label !== job.currentStep; return <button key={job.id} type="button" onClick={() => onSelect(job.id)} aria-label={`${job.company} ${state.label}${showCurrentStep ? `, 현재 단계 ${job.currentStep}` : ""}`} className="flex min-w-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"><span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: `hsl(${colors.get(companyColorKey(job.company)) ?? 192} 72% 64%)` }}/><span className="max-w-28 truncate text-[10px] font-bold text-slate-700">{job.company}</span><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${state.className}`}>{state.label}</span>{showCurrentStep && <span className="hidden text-[9px] font-semibold text-slate-500 sm:inline">{job.currentStep}</span>}</button>; })}</div>}
+    {visibleJobs.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 sm:px-5" aria-label="기업별 지원 현황"><span className="shrink-0 text-[10px] font-bold text-slate-400">기업 현황</span>{[...visibleJobs].sort((a, b) => a.company.localeCompare(b.company, "ko")).map((job) => { const state = calendarApplicationState(job); return <button key={job.id} type="button" onClick={() => onSelect(job.id)} aria-label={`${job.company} ${state.label}, 현재 단계 ${job.currentStep}`} className="flex min-w-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"><span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: `hsl(${colors.get(companyColorKey(job.company)) ?? 192} 72% 64%)` }}/><span className="max-w-28 truncate text-[10px] font-bold text-slate-700">{job.company}</span><span aria-hidden="true" className="h-3 w-px shrink-0 bg-slate-200"/><CalendarStateMark state={state}/><span className="hidden max-w-24 truncate text-[9px] font-semibold text-slate-500 sm:inline">{job.currentStep}</span></button>; })}</div>}
     <div className="min-w-0 overflow-hidden">
       <div className="w-full min-w-0">
         <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">{["일", "월", "화", "수", "목", "금", "토"].map((day) => <div key={day} className="px-2 py-2 text-center text-[10px] font-bold text-slate-400">{day}</div>)}</div>
@@ -361,21 +375,21 @@ function TodaySchedulePanel({ items, today, colors, onClose, onSelect }: { items
 }
 
 function CalendarPeriodBar({ segment, hue, highlighted, onHighlight, onSelect }: { segment: CalendarPeriodSegment; hue: number; highlighted: boolean; onHighlight: (id: string | null) => void; onSelect: (id: string) => void }) {
-  const submissionLabel = segment.job.currentStep === "지원 준비" ? "제출 전" : "제출 완료";
-  return <button onClick={() => onSelect(segment.job.id)} onPointerEnter={() => onHighlight(segment.job.id)} onPointerLeave={() => onHighlight(null)} onFocus={() => onHighlight(segment.job.id)} onBlur={() => onHighlight(null)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간, ${submissionLabel}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative flex h-[30px] min-w-0 items-center gap-1.5 px-2 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-20 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${highlighted ? "z-10 -translate-y-0.5 brightness-95 shadow-md ring-1 ring-black/10" : "z-[1]"} ${segment.continuesLeft ? "" : "ml-2 rounded-l-md"} ${segment.continuesRight ? "" : "mr-2 rounded-r-md"}`}>
+  const state = calendarApplicationState(segment.job);
+  return <button onClick={() => onSelect(segment.job.id)} onPointerEnter={() => onHighlight(segment.job.id)} onPointerLeave={() => onHighlight(null)} onFocus={() => onHighlight(segment.job.id)} onBlur={() => onHighlight(null)} aria-label={`${segment.job.company} ${segment.job.role} 지원 접수 기간, ${state.label}`} style={{ ...calendarColor(hue, segment.completed), gridColumn: `${segment.startColumn + 1} / ${segment.endColumn + 2}`, gridRow: segment.lane + 1 }} className={`group pointer-events-auto relative flex h-[30px] min-w-0 items-center gap-1 overflow-hidden px-1.5 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-20 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 sm:gap-1.5 sm:px-2 ${highlighted ? "z-10 -translate-y-0.5 brightness-95 shadow-md ring-1 ring-slate-400/30" : "z-[1]"} ${segment.continuesLeft ? "" : "ml-1 rounded-l-md sm:ml-2"} ${segment.continuesRight ? "" : "mr-1 rounded-r-md sm:mr-2"}`}>
     <BriefcaseIcon className={`size-3.5 shrink-0 opacity-70 transition-transform ${highlighted ? "scale-110" : "group-hover:scale-110"}`}/>
-    <span className="flex min-w-0 overflow-hidden flex-col leading-none"><span className="truncate text-[9px] font-bold sm:text-[10px]">{segment.job.company}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75 sm:text-[9px]">{segment.job.role}</span></span>
-    <span className="ml-auto shrink-0 rounded-full bg-white/70 px-1.5 py-0.5 text-[8px] font-bold">{submissionLabel}</span>
-    <CalendarTooltip>{segment.job.company} · {segment.job.role} · {submissionLabel} · 현재 단계 {segment.job.currentStep} · {formatPeriod(segment.job.startDate, segment.job.startTime, segment.job.deadline, segment.job.deadlineTime)}</CalendarTooltip>
+    <span className="flex min-w-0 flex-1 overflow-hidden flex-col leading-none"><span className="truncate text-[9px] font-bold sm:text-[10px]">{segment.job.company}</span><span className="mt-0.5 hidden truncate text-[8px] font-medium opacity-75 sm:block sm:text-[9px]">{segment.job.role}</span></span>
+    <CalendarStateMark state={state} className="ml-auto max-w-[72px]"/>
+    <CalendarTooltip>{segment.job.company} · {segment.job.role} · {state.label} · 현재 단계 {segment.job.currentStep} · {formatPeriod(segment.job.startDate, segment.job.startTime, segment.job.deadline, segment.job.deadlineTime)}</CalendarTooltip>
   </button>;
 }
 
 function CalendarEventItem({ event, hue, onSelect }: { event: CalendarEvent; hue: number; onSelect: (id: string) => void }) {
-  const Icon = event.kind === "deadline" ? CalendarIcon : ClockIcon;
-  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.job.role} ${event.title}`} style={calendarColor(hue, event.completed)} className={`group relative z-[1] mx-2 flex min-h-8 w-[calc(100%-1rem)] min-w-0 items-center gap-1 rounded-md px-1.5 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-20 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${event.completed ? "line-through" : ""}`}>
+  const Icon = event.completed ? CheckIcon : event.kind === "deadline" ? CalendarIcon : ClockIcon;
+  return <button onClick={() => onSelect(event.job.id)} aria-label={`${event.job.company} ${event.job.role} ${event.title}${event.completed ? ", 완료" : ""}`} style={calendarColor(hue, event.completed)} className="group relative z-[1] mx-1 flex min-h-8 w-[calc(100%-0.5rem)] min-w-0 items-center gap-1 overflow-hidden rounded-md px-1 text-left transition-[filter,transform,box-shadow] duration-150 hover:z-20 hover:-translate-y-0.5 hover:brightness-95 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 sm:mx-2 sm:w-[calc(100%-1rem)] sm:px-1.5">
     <Icon className="size-3 shrink-0 opacity-70 transition-transform group-hover:scale-110"/>
-    <span className="flex min-w-0 overflow-hidden flex-col leading-none"><span className="truncate text-[9px] font-bold">{event.job.company} · {event.title}</span><span className="mt-0.5 truncate text-[8px] font-medium opacity-75">{event.time ? `${formatTime(event.time)} · ` : ""}{event.job.role}</span></span>
-    <CalendarTooltip>{event.job.company} · {event.job.role} · {event.title}{event.time ? ` · ${formatTime(event.time)}` : ""}</CalendarTooltip>
+    <span className="flex min-w-0 overflow-hidden flex-col leading-none"><span className="truncate text-[9px] font-bold">{event.job.company}<span className="hidden sm:inline"> · {event.title}</span></span><span className="mt-0.5 hidden truncate text-[8px] font-medium opacity-75 sm:block">{event.time ? `${formatTime(event.time)} · ` : ""}{event.job.role}</span></span>
+    <CalendarTooltip>{event.job.company} · {event.job.role} · {event.title}{event.completed ? " · 완료" : ""}{event.time ? ` · ${formatTime(event.time)}` : ""}</CalendarTooltip>
   </button>;
 }
 
