@@ -232,7 +232,7 @@ export async function createApplication(
       current_step: draft.currentStep,
       assessments: draft.assessments,
       link: draft.link,
-      memo: "",
+      memo: draft.memo,
     })
     .select(applicationColumns)
     .single();

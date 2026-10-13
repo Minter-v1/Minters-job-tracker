@@ -3,7 +3,6 @@
 import FileHandler from "@tiptap/extension-file-handler";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
-import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type RichTextEditorProps = {
-  applicationId: string;
+  applicationId?: string | null;
   value: string;
   onChange: (value: string) => void;
 };
@@ -31,6 +30,11 @@ export function RichTextEditor({ applicationId, value, onChange }: RichTextEdito
   const uploadImages = useCallback(async (editor: Editor, files: File[], position?: number) => {
     const images = files.filter((file) => ALLOWED_IMAGE_TYPES.includes(file.type));
     if (!images.length) return;
+
+    if (!applicationId) {
+      setUploadError("이미지는 지원 정보를 등록한 뒤 상세 화면에서 추가할 수 있어요.");
+      return;
+    }
 
     const oversized = images.find((file) => file.size > MAX_IMAGE_SIZE);
     if (oversized) {
@@ -75,7 +79,6 @@ export function RichTextEditor({ applicationId, value, onChange }: RichTextEdito
     immediatelyRender: false,
     extensions: [
       StarterKit,
-      Underline,
       Image.configure({ allowBase64: false }),
       Placeholder.configure({ placeholder: "지원 일정, 면접 시간, 기억할 내용을 자유롭게 적어보세요." }),
       FileHandler.configure({
@@ -113,7 +116,7 @@ export function RichTextEditor({ applicationId, value, onChange }: RichTextEdito
         <ToolbarButton label="글머리표 목록" active={editor.isActive("bulletList")} onPress={() => editor.chain().focus().toggleBulletList().run()}>• 목록</ToolbarButton>
         <ToolbarButton label="번호 목록" active={editor.isActive("orderedList")} onPress={() => editor.chain().focus().toggleOrderedList().run()}>1. 목록</ToolbarButton>
         <span className="rich-toolbar-divider" />
-        <ToolbarButton label="이미지 추가" disabled={uploading} onPress={() => fileInputRef.current?.click()}>{uploading ? "업로드 중" : <><ImageIcon />이미지</>}</ToolbarButton>
+        <ToolbarButton label={applicationId ? "이미지 추가" : "이미지는 등록 후 추가 가능"} disabled={uploading || !applicationId} onPress={() => fileInputRef.current?.click()}>{uploading ? "업로드 중" : <><ImageIcon />이미지</>}</ToolbarButton>
         <ToolbarButton label="서식 지우기" onPress={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}>서식 지우기</ToolbarButton>
         <input ref={fileInputRef} type="file" accept={ALLOWED_IMAGE_TYPES.join(",")} multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void uploadImages(editor, files); event.currentTarget.value = ""; }}/>
       </div>
@@ -123,7 +126,7 @@ export function RichTextEditor({ applicationId, value, onChange }: RichTextEdito
       </div>
       <div className="rich-editor-footer">
         <span className={uploadError ? "text-rose-500" : undefined}>{uploadError || "- 또는 1. + Space · **굵게** · ⌘/Ctrl+B"}</span>
-        <span>이미지를 붙여넣거나 드래그</span>
+        <span>{applicationId ? "이미지를 붙여넣거나 드래그" : "이미지는 등록 후 추가"}</span>
       </div>
     </div>
   );
