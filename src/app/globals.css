@@ -12,6 +12,10 @@ button,select { cursor:pointer; }
 .outline-button:hover { border-color:#cbd5e1; background:#f8fafc; }
 .square-button { display:flex; width:36px; height:36px; align-items:center; justify-content:center; border:0; border-radius:11px; color:#64748b; transition:150ms ease; }
 .square-button:hover { background:#f1f5f9; color:#0f172a; }
+@keyframes today-panel-in { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+.today-panel-in { animation:today-panel-in 180ms ease-out; }
+@media (min-width:640px) { @keyframes today-panel-in { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:translateX(0); } } }
+@media (prefers-reduced-motion:reduce) { .today-panel-in { animation:none; } }
 .plain-field { width:100%; min-height:42px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:0 12px; color:#0f172a; font-size:13px; outline:none; transition:150ms ease; }
 .plain-field::placeholder { color:#a8b1bf; }
 .plain-field:hover { border-color:#cbd5e1; }
