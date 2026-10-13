@@ -56,6 +56,8 @@ create table if not exists public.applications (
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   company text not null check (char_length(trim(company)) > 0),
   role text not null check (char_length(trim(role)) > 0),
+  employment_type text
+    check (employment_type in ('정규직', '계약직', '인턴')),
   start_date date,
   start_time time,
   deadline date not null,
