@@ -158,11 +158,10 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   async function toggleTask(id: string, done: boolean) { if (!selected) return; const ok = await runWrite(async () => { await updateApplicationTask(createClient(), id, done); return true; }); if (ok) updateJob(selected.id, { tasks: selected.tasks.map((task) => task.id === id ? { ...task, done } : task) }); }
   async function removeTask(id: string) { if (!selected) return; const ok = await runWrite(async () => { await deleteApplicationTask(createClient(), id); return true; }); if (ok) updateJob(selected.id, { tasks: selected.tasks.filter((task) => task.id !== id) }); }
   async function addStage(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selected || !newStage.trim()) return; const stage = await runWrite(() => createApplicationStage(createClient(), selected.id, newStage)); if (stage) { updateJob(selected.id, { stages: [...selected.stages, stage] }); setNewStage(""); } }
-  async function patchStage(id: string, changes: Partial<JobStage>) {
-    if (!selected) return;
+  async function patchStage(id: string, changes: Partial<JobStage>): Promise<boolean> {
+    if (!selected) return false;
     const changedStage = selected.stages.find((stage) => stage.id === id);
-    const ok = await runWrite(async () => { await updateApplicationStage(createClient(), id, changes); return true; });
-    if (!ok || !changedStage) return;
+    if (!changedStage) return false;
 
     const stages = selected.stages.map((stage) => stage.id === id ? { ...stage, ...changes } : stage);
     const applicationChanges: Partial<Job> = { stages };
@@ -183,7 +182,15 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
       if (changedStage.position <= currentPosition) applicationChanges.currentStep = changedStage.title;
     }
 
-    updateJob(selected.id, applicationChanges);
+    const ok = await runWrite(async () => {
+      const client = createClient();
+      await updateApplicationStage(client, id, changes);
+      if (applicationChanges.currentStep !== undefined) await updateApplication(client, selected.id, { currentStep: applicationChanges.currentStep });
+      return true;
+    });
+    if (!ok) return false;
+    setJobs((items) => items.map((job) => job.id === selected.id ? { ...job, ...applicationChanges } : job));
+    return true;
   }
   async function removeStage(id: string) { if (!selected) return; const removed = selected.stages.find((stage) => stage.id === id); const ok = await runWrite(async () => { await deleteApplicationStage(createClient(), id); return true; }); if (!ok) return; const stages = selected.stages.filter((stage) => stage.id !== id); const changes: Partial<Job> = { stages }; if (removed?.title === selected.currentStep) changes.currentStep = stages.find((stage) => !stage.completed)?.title ?? stages.at(-1)?.title ?? "지원 준비"; updateJob(selected.id, changes); }
   async function moveStage(index: number, direction: -1 | 1) { if (!selected || index + direction < 0 || index + direction >= selected.stages.length) return; const stages = [...selected.stages]; [stages[index], stages[index + direction]] = [stages[index + direction], stages[index]]; stages.forEach((stage, position) => { stage.position = position; }); updateJob(selected.id, { stages }); await Promise.all(stages.map((stage) => runWrite(() => updateApplicationStage(createClient(), stage.id, { position: stage.position })))); }
@@ -401,7 +408,7 @@ function AddModal({ draft, setDraft, onClose, onSubmit, isSaving }: { draft: Job
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 sm:items-center sm:p-6" onMouseDown={(event) => event.target === event.currentTarget && !isSaving && onClose()}><div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[24px] bg-white p-5 shadow-2xl sm:max-w-2xl sm:rounded-[24px] sm:p-8"><div className="mb-7 flex justify-between"><div><h2 className="text-2xl font-bold">지원 정보 등록</h2><p className="mt-1 text-sm text-slate-400">기업과 기본 전형 정보를 입력하세요.</p></div><button type="button" onClick={onClose} className="square-button"><CloseIcon className="size-5"/></button></div><form onSubmit={onSubmit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px]"><Field label="기업명"><input required autoFocus value={draft.company} onChange={(event) => setDraft({ ...draft, company: event.target.value })} className="plain-field"/></Field><Field label="직무명"><input required value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} className="plain-field"/></Field><Field label="고용 형태"><select required value={draft.employmentType ?? ""} onChange={(event) => setDraft({ ...draft, employmentType: event.target.value as EmploymentType })} className="plain-field"><option value="" disabled>선택</option>{EMPLOYMENT_TYPES.map((type) => <option key={type}>{type}</option>)}</select></Field></div><div className="rounded-2xl bg-slate-50 p-4"><p className="mb-3 text-xs font-bold text-slate-700">지원 접수 기간</p><RecruitmentPeriodFields value={draft} onChange={(changes) => setDraft({ ...draft, ...changes })}/>{invalidPeriod && <p className="mt-2 text-xs font-semibold text-rose-500">시작 일시는 마감 일시보다 늦을 수 없습니다.</p>}</div><Field label="현재 단계"><select value={draft.currentStep} onChange={(event) => setDraft({ ...draft, currentStep: event.target.value })} className="plain-field">{PROCESS_STEPS.map((step) => <option key={step}>{step}</option>)}</select></Field><Field label="포함된 전형"><AssessmentPicker value={draft.assessments} onChange={(assessments) => setDraft({ ...draft, assessments })}/></Field><Field label="공고 링크" optional><input type="url" value={draft.link} onChange={(event) => setDraft({ ...draft, link: event.target.value })} className="plain-field" placeholder="https://"/></Field><section><p className="mb-2 text-xs font-semibold text-slate-600">메모 <em className="ml-2 font-normal not-italic text-slate-400">선택</em></p><RichTextEditor applicationId={null} value={draft.memo} onChange={(memo) => setDraft((current) => ({ ...current, memo }))}/></section><div className="flex justify-end gap-2 border-t border-slate-100 pt-5"><button type="button" onClick={onClose} className="outline-button">취소</button><button disabled={isSaving || invalidPeriod} className="solid-button disabled:opacity-60">{isSaving ? "저장 중..." : "등록하기"}</button></div></form></div></div>;
 }
 
-type DetailProps = { job: Job; onClose: () => void; onUpdate: (changes: Partial<Job>) => void; onDelete: () => void; newTask: string; setNewTask: (value: string) => void; onAddTask: (event: FormEvent<HTMLFormElement>) => void; onToggleTask: (id: string, done: boolean) => void; onDeleteTask: (id: string) => void; newStage: string; setNewStage: (value: string) => void; onAddStage: (event: FormEvent<HTMLFormElement>) => void; onPatchStage: (id: string, changes: Partial<JobStage>) => void; onDeleteStage: (id: string) => void; onMoveStage: (index: number, direction: -1 | 1) => void; isSaving: boolean };
+type DetailProps = { job: Job; onClose: () => void; onUpdate: (changes: Partial<Job>) => void; onDelete: () => void; newTask: string; setNewTask: (value: string) => void; onAddTask: (event: FormEvent<HTMLFormElement>) => void; onToggleTask: (id: string, done: boolean) => void; onDeleteTask: (id: string) => void; newStage: string; setNewStage: (value: string) => void; onAddStage: (event: FormEvent<HTMLFormElement>) => void; onPatchStage: (id: string, changes: Partial<JobStage>) => Promise<boolean>; onDeleteStage: (id: string) => void; onMoveStage: (index: number, direction: -1 | 1) => void; isSaving: boolean };
 function Detail({ job, onClose, onUpdate, onDelete, newTask, setNewTask, onAddTask, onToggleTask, onDeleteTask, newStage, setNewStage, onAddStage, onPatchStage, onDeleteStage, onMoveStage, isSaving }: DetailProps) {
   const percent = progress(job); const preparing = job.currentStep === "지원 준비"; const next = nextStage(job);
   const [company, setCompany] = useState(job.company); const [role, setRole] = useState(job.role);
@@ -432,48 +439,58 @@ function Detail({ job, onClose, onUpdate, onDelete, newTask, setNewTask, onAddTa
     <section className="my-7"><div className="mb-3 flex justify-between"><h3 className="text-sm font-bold">준비 체크리스트</h3><span className="text-xs text-slate-400">{job.tasks.filter((task) => task.done).length}/{job.tasks.length}</span></div><div className="space-y-2">{job.tasks.map((task) => <div key={task.id} className="flex items-center gap-3 rounded-xl border border-slate-200 px-3.5 py-3"><input type="checkbox" checked={task.done} onChange={() => onToggleTask(task.id, !task.done)} className="size-4 accent-cyan-500"/><span className={`flex-1 text-sm ${task.done ? "text-slate-300 line-through" : ""}`}>{task.label}</span><button onClick={() => onDeleteTask(task.id)}><CloseIcon className="size-4 text-slate-300"/></button></div>)}</div><form onSubmit={onAddTask} className="mt-2 flex gap-2"><input value={newTask} onChange={(event) => setNewTask(event.target.value)} className="plain-field" placeholder="할 일 추가"/><button disabled={!newTask.trim()} className="outline-button px-3"><PlusIcon className="size-4"/></button></form></section><section className="mb-8"><p className="mb-2 text-xs font-bold">메모</p><RichTextEditor key={job.id} applicationId={job.id} value={job.memo} onChange={(memo) => onUpdate({ memo })}/></section><button onClick={onDelete} className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-rose-500"><TrashIcon className="size-4"/>지원 정보 삭제</button></div></aside></div>;
 }
 
-function StageTitleInput({ stage, onCommit }: { stage: JobStage; onCommit: (title: string) => void }) {
+function StageTitleInput({ stage, onCommit }: { stage: JobStage; onCommit: (title: string) => Promise<boolean> }) {
   const [title, setTitle] = useState(stage.title);
   const [isEditing, setIsEditing] = useState(false);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const isComposing = useRef(false);
   const pendingBlur = useRef(false);
+  const isSaving = useRef(false);
 
-  function commit(rawTitle = title) {
+  async function commit(rawTitle = title) {
+    if (isSaving.current) return;
     const nextTitle = rawTitle.trim();
     if (!nextTitle) {
-      setTitle(stage.title);
-      setIsEditing(false);
+      setStatus("error");
       return;
     }
     setTitle(nextTitle);
-    if (nextTitle !== stage.title) onCommit(nextTitle);
+    if (nextTitle === stage.title) { setStatus("idle"); setIsEditing(false); return; }
+    isSaving.current = true;
+    setStatus("saving");
+    const saved = await onCommit(nextTitle);
+    isSaving.current = false;
+    if (!saved) { setStatus("error"); return; }
+    setStatus("saved");
     setIsEditing(false);
   }
 
   function cancel() {
     setTitle(stage.title);
+    setStatus("idle");
     setIsEditing(false);
   }
 
-  if (!isEditing) return <button type="button" onClick={() => setIsEditing(true)} aria-label={`${stage.title} 단계명 수정`} className={`group/title flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${stage.completed ? "text-slate-300 line-through" : "text-slate-700"}`}><span className="truncate">{stage.title}</span><PencilIcon className="size-3 shrink-0 text-slate-300 transition-colors group-hover/title:text-slate-500"/></button>;
+  if (!isEditing) return <div className="flex min-w-0 items-center gap-1"><button type="button" onClick={() => { setTitle(stage.title); setStatus("idle"); setIsEditing(true); }} aria-label={`${stage.title} 단계명 수정`} className={`group/title flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${stage.completed ? "text-slate-300 line-through" : "text-slate-700"}`}><span className="truncate">{stage.title}</span><PencilIcon className="size-3 shrink-0 text-slate-300 transition-colors group-hover/title:text-slate-500"/></button>{status === "saved" && <span className="shrink-0 text-[9px] font-semibold text-cyan-600">저장됨</span>}</div>;
 
   return <div className="flex min-w-0 items-center gap-1 rounded-lg border border-cyan-300 bg-white px-1.5 focus-within:ring-2 focus-within:ring-cyan-500/20" onBlur={(event) => {
     if (event.currentTarget.contains(event.relatedTarget)) return;
     if (isComposing.current) { pendingBlur.current = true; return; }
-    commit();
+    void commit();
   }}>
     <input autoFocus aria-label={`${stage.title} 단계명 편집`} value={title} maxLength={40} onChange={(event) => setTitle(event.target.value)} onCompositionStart={() => { isComposing.current = true; }} onCompositionEnd={(event) => {
       isComposing.current = false;
       const nextTitle = event.currentTarget.value;
       setTitle(nextTitle);
-      if (pendingBlur.current) { pendingBlur.current = false; commit(nextTitle); }
+      if (pendingBlur.current) { pendingBlur.current = false; void commit(nextTitle); }
     }} onKeyDown={(event) => {
       if (event.nativeEvent.isComposing || isComposing.current) return;
-      if (event.key === "Enter") { event.preventDefault(); commit(event.currentTarget.value); }
+      if (event.key === "Enter") { event.preventDefault(); void commit(event.currentTarget.value); }
       if (event.key === "Escape") { event.preventDefault(); cancel(); }
-    }} className={`min-w-0 flex-1 border-0 bg-transparent px-1 py-1.5 text-xs font-semibold outline-none ${stage.completed ? "text-slate-300 line-through" : "text-slate-700"}`}/>
-    <button type="button" onClick={() => commit()} aria-label="단계명 저장" className="flex size-6 shrink-0 items-center justify-center rounded-md text-cyan-700 hover:bg-cyan-50"><CheckIcon className="size-3.5"/></button>
-    <button type="button" onClick={cancel} aria-label="단계명 수정 취소" className="flex size-6 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600"><CloseIcon className="size-3.5"/></button>
+    }} disabled={status === "saving"} className={`min-w-0 flex-1 border-0 bg-transparent px-1 py-1.5 text-xs font-semibold outline-none disabled:text-slate-400 ${stage.completed ? "text-slate-300 line-through" : "text-slate-700"}`}/>
+    <button type="button" onClick={() => void commit()} disabled={status === "saving"} aria-label={status === "saving" ? "단계명 저장 중" : "단계명 저장"} className="flex size-6 shrink-0 items-center justify-center rounded-md text-cyan-700 hover:bg-cyan-50 disabled:cursor-wait disabled:text-slate-300"><CheckIcon className="size-3.5"/></button>
+    <button type="button" onClick={cancel} disabled={status === "saving"} aria-label="단계명 수정 취소" className="flex size-6 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-30"><CloseIcon className="size-3.5"/></button>
+    {status === "error" && <span className="sr-only" role="alert">단계명을 저장하지 못했습니다. 값을 확인하고 다시 시도해 주세요.</span>}
   </div>;
 }
 
