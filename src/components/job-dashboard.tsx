@@ -2,11 +2,12 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { logout } from "@/app/auth/actions";
-import { BriefcaseIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, ExternalIcon, PencilIcon, PlusIcon, SearchIcon, SortIcon, TrashIcon } from "@/components/icons";
+import { BriefcaseIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, ExternalIcon, GlobeIcon, PencilIcon, PlusIcon, SearchIcon, SortIcon, TrashIcon } from "@/components/icons";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { createApplication, createApplicationStage, createApplicationTask, deleteApplication, deleteApplicationStage, deleteApplicationTask, loadApplications, updateApplication, updateApplicationStage, updateApplicationTask } from "@/lib/supabase/applications";
 import { createClient } from "@/lib/supabase/client";
-import { ASSESSMENT_TYPES, EMPLOYMENT_TYPES, EmploymentType, Job, JobDraft, JobStage, PROCESS_STEPS, ProcessStep } from "@/types/job";
+import { createJobPlatform, deleteJobPlatform, loadJobPlatforms, updateJobPlatform } from "@/lib/supabase/platforms";
+import { ASSESSMENT_TYPES, EMPLOYMENT_TYPES, EmploymentType, Job, JobDraft, JobPlatform, JobPlatformDraft, JobStage, PROCESS_STEPS, ProcessStep } from "@/types/job";
 
 const emptyDraft: JobDraft = { company: "", role: "", employmentType: null, platformId: null, startDate: null, startTime: null, deadline: "", deadlineTime: null, currentStep: "지원 준비", assessments: [], link: "", memo: "" };
 type StageFilter = "전체" | "마감 임박" | "지원 준비" | "전형 진행" | "면접";
@@ -82,6 +83,7 @@ function calendarApplicationState(job: Job) {
 
 export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [platforms, setPlatforms] = useState<JobPlatform[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -94,6 +96,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [viewMode, setViewMode] = useState<ViewMode>("목록");
   const [query, setQuery] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isPlatformsOpen, setIsPlatformsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<JobDraft>(emptyDraft);
   const [newTask, setNewTask] = useState("");
@@ -103,13 +106,17 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadJobs() {
+    async function loadDashboard() {
       setLoaded(false); setLoadError("");
-      try { const rows = await loadApplications(createClient()); if (!cancelled) setJobs(rows); }
+      try {
+        const client = createClient();
+        const [rows, savedPlatforms] = await Promise.all([loadApplications(client), loadJobPlatforms(client)]);
+        if (!cancelled) { setJobs(rows); setPlatforms(savedPlatforms); }
+      }
       catch { if (!cancelled) setLoadError("지원 정보를 불러오지 못했습니다. 최신 DB 마이그레이션 적용 여부를 확인해 주세요."); }
       finally { if (!cancelled) setLoaded(true); }
     }
-    void loadJobs();
+    void loadDashboard();
     return () => { cancelled = true; };
   }, [reloadKey]);
   useEffect(() => { const timers = memoTimers.current; return () => timers.forEach((timer) => clearTimeout(timer)); }, []);
@@ -195,15 +202,37 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   async function removeStage(id: string) { if (!selected) return; const removed = selected.stages.find((stage) => stage.id === id); const ok = await runWrite(async () => { await deleteApplicationStage(createClient(), id); return true; }); if (!ok) return; const stages = selected.stages.filter((stage) => stage.id !== id); const changes: Partial<Job> = { stages }; if (removed?.title === selected.currentStep) changes.currentStep = stages.find((stage) => !stage.completed)?.title ?? stages.at(-1)?.title ?? "지원 준비"; updateJob(selected.id, changes); }
   async function moveStage(index: number, direction: -1 | 1) { if (!selected || index + direction < 0 || index + direction >= selected.stages.length) return; const stages = [...selected.stages]; [stages[index], stages[index + direction]] = [stages[index + direction], stages[index]]; stages.forEach((stage, position) => { stage.position = position; }); updateJob(selected.id, { stages }); await Promise.all(stages.map((stage) => runWrite(() => updateApplicationStage(createClient(), stage.id, { position: stage.position })))); }
 
+  async function addPlatform(draft: JobPlatformDraft) {
+    const platform = await runWrite(() => createJobPlatform(createClient(), draft));
+    if (!platform) return false;
+    setPlatforms((items) => [...items, platform].sort((a, b) => a.name.localeCompare(b.name, "ko")));
+    return true;
+  }
+  async function editPlatform(id: string, draft: JobPlatformDraft) {
+    const platform = await runWrite(() => updateJobPlatform(createClient(), id, draft));
+    if (!platform) return false;
+    setPlatforms((items) => items.map((item) => item.id === id ? platform : item).sort((a, b) => a.name.localeCompare(b.name, "ko")));
+    return true;
+  }
+  async function removePlatform(id: string) {
+    if (!confirm("이 플랫폼을 삭제할까요? 연결된 지원 정보는 유지되고 플랫폼 선택만 해제됩니다.")) return false;
+    const ok = await runWrite(async () => { await deleteJobPlatform(createClient(), id); return true; });
+    if (!ok) return false;
+    setPlatforms((items) => items.filter((item) => item.id !== id));
+    setJobs((items) => items.map((job) => job.platformId === id ? { ...job, platformId: null } : job));
+    return true;
+  }
+
   if (!loaded) return <DashboardLoading />;
   if (loadError) return <div className="grid min-h-screen place-items-center bg-[#f6f7f9] px-5"><div className="w-full max-w-md border border-slate-200 bg-white p-7 text-center"><p className="text-sm font-bold">{loadError}</p><button onClick={() => setReloadKey((value) => value + 1)} className="solid-button mt-5">다시 시도</button></div></div>;
   return <div className="min-h-screen overflow-x-clip bg-[#f6f7f9] text-slate-900">
-    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white"><div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-8"><div className="flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-[10px] bg-cyan-500 text-sm font-black text-white">A</div><span className="text-[15px] font-bold">지원관리</span></div><div className="flex items-center gap-2"><p className="mr-1 hidden max-w-48 truncate text-xs font-semibold text-slate-500 lg:block">{userEmail}</p><form action={logout}><button className="outline-button">로그아웃</button></form><button onClick={() => setIsAddOpen(true)} className="solid-button"><PlusIcon className="size-4"/><span className="hidden sm:inline">지원 추가</span></button></div></div></header>
+    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white"><div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-8"><div className="flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-[10px] bg-cyan-500 text-sm font-black text-white">A</div><span className="text-[15px] font-bold">지원관리</span></div><div className="flex items-center gap-2"><p className="mr-1 hidden max-w-48 truncate text-xs font-semibold text-slate-500 lg:block">{userEmail}</p><button type="button" onClick={() => setIsPlatformsOpen(true)} className="outline-button"><GlobeIcon className="size-4"/><span className="hidden sm:inline">플랫폼</span></button><form action={logout}><button className="outline-button">로그아웃</button></form><button onClick={() => setIsAddOpen(true)} className="solid-button"><PlusIcon className="size-4"/><span className="hidden sm:inline">지원 추가</span></button></div></div></header>
     <main className="mx-auto min-w-0 max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10"><div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">기업별 전형 과정과 일정을 한눈에 관리하세요.</p></div><p className={`text-xs ${saveError ? "text-rose-500" : "text-slate-400"}`}>{saveError || (pendingWrites ? "저장 중..." : "저장됨")}</p></div>
       <section className="mb-5 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4">{[["진행 중", stats.total], ["3일 내 지원 마감", stats.urgent], ["검사 진행", stats.tests], ["면접 단계", stats.interviews]].map(([label, value], index) => <div key={String(label)} className="flex items-baseline gap-2"><p className="text-xs text-slate-500">{label}</p><p className={`text-lg font-bold ${index === 1 && Number(value) ? "text-rose-500" : ""}`}>{value}</p></div>)}</section>
       <ViewToggle value={viewMode} onChange={setViewMode}/>
       {viewMode === "목록" ? <JobList jobs={jobs} visible={visible} stageFilter={stageFilter} setStageFilter={setStageFilter} stateFilter={stateFilter} setStateFilter={setStateFilter} currentStepFilter={currentStepFilter} currentStepFilters={currentStepFilters} setCurrentStepFilter={setCurrentStepFilter} dateSort={dateSort} setDateSort={setDateSort} query={query} setQuery={setQuery} onSelect={setSelectedId} onStepChange={(id, step) => updateJob(id, { currentStep: step })}/> : <CalendarView jobs={jobs} month={calendarMonth} setMonth={setCalendarMonth} onSelect={setSelectedId}/>}
     </main>
+    {isPlatformsOpen && <PlatformManager platforms={platforms} onClose={() => setIsPlatformsOpen(false)} onCreate={addPlatform} onUpdate={editPlatform} onDelete={removePlatform} isSaving={pendingWrites > 0}/>}
     {isAddOpen && <AddModal draft={draft} setDraft={setDraft} onClose={() => setIsAddOpen(false)} onSubmit={addJob} isSaving={pendingWrites > 0}/>}
     {selected && <Detail key={selected.id} job={selected} onClose={() => setSelectedId(null)} onUpdate={(changes) => updateJob(selected.id, changes)} onDelete={() => deleteJob(selected.id)} newTask={newTask} setNewTask={setNewTask} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={removeTask} newStage={newStage} setNewStage={setNewStage} onAddStage={addStage} onPatchStage={patchStage} onDeleteStage={removeStage} onMoveStage={moveStage} isSaving={pendingWrites > 0}/>}
   </div>;
@@ -405,6 +434,74 @@ function AssessmentPicker({ value, onChange }: { value: string[]; onChange: (val
 }
 
 type RecruitmentPeriodValue = Pick<Job, "startDate" | "startTime" | "deadline" | "deadlineTime">;
+
+const emptyPlatformDraft: JobPlatformDraft = { name: "", url: "", memo: "" };
+
+function PlatformManager({ platforms, onClose, onCreate, onUpdate, onDelete, isSaving }: {
+  platforms: JobPlatform[];
+  onClose: () => void;
+  onCreate: (draft: JobPlatformDraft) => Promise<boolean>;
+  onUpdate: (id: string, draft: JobPlatformDraft) => Promise<boolean>;
+  onDelete: (id: string) => Promise<boolean>;
+  isSaving: boolean;
+}) {
+  const [draft, setDraft] = useState<JobPlatformDraft>(emptyPlatformDraft);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  function startEditing(platform: JobPlatform) {
+    setEditingId(platform.id);
+    setDraft({ name: platform.name, url: platform.url, memo: platform.memo });
+    setError("");
+  }
+  function resetForm() { setEditingId(null); setDraft(emptyPlatformDraft); setError(""); }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const next = { name: draft.name.trim(), url: draft.url.trim(), memo: draft.memo.trim() };
+    if (!next.name || !next.url) { setError("플랫폼 이름과 주소를 모두 입력해 주세요."); return; }
+    try {
+      const url = new URL(next.url);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    } catch { setError("주소는 http:// 또는 https://로 시작해야 합니다."); return; }
+    if (platforms.some((platform) => platform.id !== editingId && platform.name.toLocaleLowerCase("ko-KR") === next.name.toLocaleLowerCase("ko-KR"))) {
+      setError("이미 같은 이름의 플랫폼이 있습니다."); return;
+    }
+    const saved = editingId ? await onUpdate(editingId, next) : await onCreate(next);
+    if (saved) resetForm();
+    else setError("저장하지 못했습니다. DB 마이그레이션 적용 여부를 확인해 주세요.");
+  }
+
+  return <div className="fixed inset-0 z-50 bg-slate-950/20" onMouseDown={(event) => event.target === event.currentTarget && !isSaving && onClose()}>
+    <aside className="absolute inset-y-2 right-2 flex w-[calc(100%-16px)] flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl sm:inset-y-3 sm:right-3 sm:max-w-[520px]">
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 sm:px-7">
+        <div><p className="text-sm font-bold">취업 플랫폼</p><p className="mt-0.5 text-xs text-slate-400">자주 쓰는 채용 사이트와 계정 메모를 관리합니다.</p></div>
+        <button type="button" onClick={onClose} className="square-button"><CloseIcon className="size-5"/></button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
+        <form onSubmit={submit} className="space-y-4 border-b border-slate-100 pb-7">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="플랫폼 이름"><input required maxLength={40} value={draft.name} onChange={(event) => { setDraft({ ...draft, name: event.target.value }); setError(""); }} className="plain-field" placeholder="예: 원티드"/></Field>
+            <Field label="플랫폼 주소"><input required type="url" inputMode="url" maxLength={2048} value={draft.url} onChange={(event) => { setDraft({ ...draft, url: event.target.value }); setError(""); }} className="plain-field" placeholder="https://www.wanted.co.kr"/></Field>
+          </div>
+          <Field label="로그인·특징 메모" optional><textarea maxLength={2000} rows={4} value={draft.memo} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} className="plain-field min-h-28 resize-y leading-6" placeholder="예: 네이버 이메일로 로그인 · 북마크한 공고 확인"/></Field>
+          <div className="flex items-start gap-2 text-xs leading-5 text-amber-700"><span aria-hidden="true">※</span><p>로그인 이메일이나 이용 특징만 기록하세요. 비밀번호는 저장하지 마세요.</p></div>
+          {error && <p role="alert" className="text-xs font-semibold text-rose-500">{error}</p>}
+          <div className="flex justify-end gap-2">
+            {editingId && <button type="button" onClick={resetForm} className="outline-button">수정 취소</button>}
+            <button disabled={isSaving || !draft.name.trim() || !draft.url.trim()} className="solid-button disabled:cursor-not-allowed disabled:opacity-50">{isSaving ? "저장 중..." : editingId ? "변경 저장" : "플랫폼 추가"}</button>
+          </div>
+        </form>
+        <section className="pt-7">
+          <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-bold">저장된 플랫폼</h2><span className="text-xs font-semibold text-slate-400">{platforms.length}개</span></div>
+          {platforms.length ? <div className="space-y-2">{platforms.map((platform) => <article key={platform.id} className={`border px-4 py-4 transition-colors ${editingId === platform.id ? "border-cyan-300 bg-cyan-50/50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+            <div className="flex items-start gap-3"><div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><GlobeIcon className="size-4"/></div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-bold">{platform.name}</h3><a href={platform.url} target="_blank" rel="noreferrer" aria-label={`${platform.name} 새 탭에서 열기`} className="text-slate-400 transition-colors hover:text-cyan-700"><ExternalIcon className="size-3.5"/></a></div><p className="mt-1 truncate text-[11px] text-slate-400">{platform.url}</p>{platform.memo && <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-600">{platform.memo}</p>}</div><div className="flex shrink-0"><button type="button" onClick={() => startEditing(platform)} aria-label={`${platform.name} 수정`} className="square-button"><PencilIcon className="size-4"/></button><button type="button" onClick={() => void onDelete(platform.id)} aria-label={`${platform.name} 삭제`} className="square-button hover:text-rose-500"><TrashIcon className="size-4"/></button></div></div>
+          </article>)}</div> : <div className="border border-dashed border-slate-200 px-5 py-12 text-center"><GlobeIcon className="mx-auto size-6 text-slate-300"/><p className="mt-3 text-sm font-bold text-slate-600">아직 저장한 플랫폼이 없습니다.</p><p className="mt-1 text-xs text-slate-400">위 폼에서 자주 쓰는 채용 사이트를 추가하세요.</p></div>}
+        </section>
+      </div>
+    </aside>
+  </div>;
+}
+
 function RecruitmentPeriodFields({ value, onChange }: { value: RecruitmentPeriodValue; onChange: (changes: Partial<RecruitmentPeriodValue>) => void }) {
   return <div className="grid gap-3">
     <div className="grid grid-cols-[minmax(0,1fr)_104px] gap-2">
