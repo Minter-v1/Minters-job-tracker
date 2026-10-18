@@ -32,6 +32,7 @@ type ApplicationRow = {
   company: string;
   role: string;
   employment_type?: EmploymentType | null;
+  platform_id?: string | null;
   start_date: string | null;
   start_time: string | null;
   deadline: string;
@@ -52,6 +53,7 @@ type ApplicationChanges = Partial<
     | "company"
     | "role"
     | "employmentType"
+    | "platformId"
     | "startDate"
     | "startTime"
     | "deadline"
@@ -69,6 +71,7 @@ const applicationColumns = `
   company,
   role,
   employment_type,
+  platform_id,
   start_date,
   start_time,
   deadline,
@@ -87,6 +90,7 @@ function toJob(row: ApplicationRow): Job {
     company: row.company,
     role: row.role,
     employmentType: row.employment_type ?? null,
+    platformId: row.platform_id ?? null,
     startDate: row.start_date,
     startTime: row.start_time?.slice(0, 5) ?? null,
     deadline: row.deadline,
@@ -130,6 +134,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
         company,
         role,
         employment_type,
+        platform_id,
         start_date,
         start_time,
         deadline,
@@ -165,6 +170,48 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
       referencedTable: "application_stages",
       ascending: true,
     });
+
+  if (error?.code === "42703" && error.message.includes("platform_id")) {
+    const fallback = await supabase
+      .from("applications")
+      .select(
+        `
+          id,
+          company,
+          role,
+          employment_type,
+          start_date,
+          start_time,
+          deadline,
+          deadline_time,
+          status,
+          current_step,
+          assessments,
+          link,
+          memo,
+          created_at,
+          application_tasks (
+            id,
+            label,
+            done,
+            position
+          ),
+          application_stages (
+            id,
+            title,
+            scheduled_date,
+            scheduled_time,
+            completed,
+            position
+          )
+        `,
+      )
+      .order("deadline", { ascending: true })
+      .order("position", { referencedTable: "application_tasks", ascending: true })
+      .order("position", { referencedTable: "application_stages", ascending: true });
+    data = fallback.data?.map((row) => ({ ...row, platform_id: null })) ?? null;
+    error = fallback.error;
+  }
 
   if (error?.code === "42703" && error.message.includes("employment_type")) {
     const fallback = await supabase
@@ -203,7 +250,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
       .order("deadline", { ascending: true })
       .order("position", { referencedTable: "application_tasks", ascending: true })
       .order("position", { referencedTable: "application_stages", ascending: true });
-    data = fallback.data?.map((row) => ({ ...row, employment_type: null })) ?? null;
+    data = fallback.data?.map((row) => ({ ...row, employment_type: null, platform_id: null })) ?? null;
     error = fallback.error;
   }
 
@@ -218,22 +265,25 @@ export async function createApplication(
   supabase: SupabaseClient,
   draft: JobDraft,
 ): Promise<Job> {
+  const payload: Record<string, unknown> = {
+    company: draft.company,
+    role: draft.role,
+    employment_type: draft.employmentType,
+    start_date: draft.startDate || null,
+    start_time: draft.startDate ? draft.startTime || null : null,
+    deadline: draft.deadline,
+    deadline_time: draft.deadlineTime || null,
+    status: "준비 중",
+    current_step: draft.currentStep,
+    assessments: draft.assessments,
+    link: draft.link,
+    memo: draft.memo,
+  };
+  if (draft.platformId) payload.platform_id = draft.platformId;
+
   const { data, error } = await supabase
     .from("applications")
-    .insert({
-      company: draft.company,
-      role: draft.role,
-      employment_type: draft.employmentType,
-      start_date: draft.startDate || null,
-      start_time: draft.startDate ? draft.startTime || null : null,
-      deadline: draft.deadline,
-      deadline_time: draft.deadlineTime || null,
-      status: "준비 중",
-      current_step: draft.currentStep,
-      assessments: draft.assessments,
-      link: draft.link,
-      memo: draft.memo,
-    })
+    .insert(payload)
     .select(applicationColumns)
     .single();
 
@@ -258,6 +308,7 @@ export async function updateApplication(
   if (changes.company !== undefined) payload.company = changes.company;
   if (changes.role !== undefined) payload.role = changes.role;
   if (changes.employmentType !== undefined) payload.employment_type = changes.employmentType;
+  if (changes.platformId !== undefined) payload.platform_id = changes.platformId;
   if (changes.startDate !== undefined) payload.start_date = changes.startDate || null;
   if (changes.startTime !== undefined) payload.start_time = changes.startTime || null;
   if (changes.deadline !== undefined) payload.deadline = changes.deadline;
