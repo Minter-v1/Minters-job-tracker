@@ -8,7 +8,7 @@ import { createApplication, createApplicationStage, createApplicationTask, delet
 import { createClient } from "@/lib/supabase/client";
 import { ASSESSMENT_TYPES, EMPLOYMENT_TYPES, EmploymentType, Job, JobDraft, JobStage, PROCESS_STEPS, ProcessStep } from "@/types/job";
 
-const emptyDraft: JobDraft = { company: "", role: "", employmentType: null, startDate: null, startTime: null, deadline: "", deadlineTime: null, currentStep: "지원 준비", assessments: [], link: "", memo: "" };
+const emptyDraft: JobDraft = { company: "", role: "", employmentType: null, platformId: null, startDate: null, startTime: null, deadline: "", deadlineTime: null, currentStep: "지원 준비", assessments: [], link: "", memo: "" };
 type StageFilter = "전체" | "마감 임박" | "지원 준비" | "전형 진행" | "면접";
 type StateFilter = "전체 상태" | "진행 중" | "최종 합격" | "불합격" | "지원 취소";
 type ViewMode = "목록" | "캘린더";

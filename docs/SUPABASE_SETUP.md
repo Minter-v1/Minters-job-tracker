@@ -153,6 +153,7 @@ SQL은 다음 리소스를 생성합니다.
 | --- | --- |
 | `user_roles` | `admin`과 `user` 권한 저장 |
 | `access_requests` | 가입 요청과 승인 결과 저장 |
+| `job_platforms` | 사용자별 취업 플랫폼 URL과 메모 저장 |
 | `applications` | 사용자별 지원 정보 저장 |
 | `application_tasks` | 지원별 체크리스트 저장 |
 | `application_stages` | 지원별 전형 단계와 예정 일정 저장 |
@@ -162,7 +163,7 @@ SQL은 다음 리소스를 생성합니다.
 
 ### 예상 결과
 
-`Table Editor`에서 다섯 테이블이 보이고 각 테이블의 RLS가 활성화되어야 합니다. `Storage`에는 비공개 `memo-images` 버킷이 보여야 합니다.
+`Table Editor`에서 여섯 테이블이 보이고 각 테이블의 RLS가 활성화되어야 합니다. `Storage`에는 비공개 `memo-images` 버킷이 보여야 합니다.
 
 ### 이미 운영 중인 프로젝트 업데이트
 
@@ -171,6 +172,8 @@ SQL은 다음 리소스를 생성합니다.
 1. [`20261001_add_stage_scheduled_time.sql`](./supabase/migrations/20261001_add_stage_scheduled_time.sql)
 2. [`20261005_add_application_period_times.sql`](./supabase/migrations/20261005_add_application_period_times.sql)
 3. [`20261005_create_memo_images_bucket.sql`](./supabase/migrations/20261005_create_memo_images_bucket.sql)
+4. [`20261013_add_employment_type.sql`](./supabase/migrations/20261013_add_employment_type.sql)
+5. [`20261018_add_job_platforms.sql`](./supabase/migrations/20261018_add_job_platforms.sql)
 
 각 파일은 `SQL Editor → New query`에서 한 번씩 실행합니다. 마지막 파일은 5MB 이하의 JPEG·PNG·GIF·WebP만 허용하고, 로그인 사용자가 자신의 UUID 폴더에 있는 이미지만 읽고 쓸 수 있도록 설정합니다.
 
@@ -181,7 +184,8 @@ SQL은 다음 리소스를 생성합니다.
 - `anon`은 네 테이블을 직접 읽거나 쓸 수 없습니다.
 - 로그인 사용자는 자신의 `user_roles` 행만 읽습니다.
 - 관리자는 가입 요청을 조회하고 상태를 변경할 수 있습니다.
-- 일반 사용자는 자신의 `applications`와 하위 task만 CRUD할 수 있습니다.
+- 일반 사용자는 자신의 `job_platforms`, `applications`와 하위 task·stage만 CRUD할 수 있습니다.
+- 다른 사용자의 플랫폼 ID를 자신의 지원 정보에 연결할 수 없습니다.
 
 > [!NOTE]
 > 공개 가입 요청 폼은 `anon`이 테이블에 직접 insert하지 않습니다. Next.js 서버 Route Handler가 입력 검증·속도 제한을 수행한 뒤 Secret Key로 저장합니다.

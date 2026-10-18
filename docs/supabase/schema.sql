@@ -51,6 +51,19 @@ create unique index if not exists access_requests_email_lower_idx
 create index if not exists access_requests_status_requested_idx
   on public.access_requests (status, requested_at desc);
 
+create table if not exists public.job_platforms (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name text not null check (name = btrim(name) and char_length(name) between 1 and 40),
+  url text not null check (char_length(url) between 1 and 2048 and url ~* '^https?://'),
+  memo text not null default '' check (char_length(memo) <= 2000),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists job_platforms_user_name_lower_idx
+  on public.job_platforms (user_id, lower(name));
+
 create table if not exists public.applications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
@@ -58,6 +71,7 @@ create table if not exists public.applications (
   role text not null check (char_length(trim(role)) > 0),
   employment_type text
     check (employment_type in ('정규직', '계약직', '인턴')),
+  platform_id uuid references public.job_platforms (id) on delete set null,
   start_date date,
   start_time time,
   deadline date not null,
@@ -105,6 +119,10 @@ create index if not exists applications_user_deadline_idx
 
 create index if not exists applications_user_step_idx
   on public.applications (user_id, current_step);
+
+create index if not exists applications_user_platform_idx
+  on public.applications (user_id, platform_id)
+  where platform_id is not null;
 
 create index if not exists application_tasks_application_position_idx
   on public.application_tasks (application_id, position);
@@ -166,6 +184,11 @@ create trigger applications_set_updated_at
   before update on public.applications
   for each row execute function public.set_updated_at();
 
+drop trigger if exists job_platforms_set_updated_at on public.job_platforms;
+create trigger job_platforms_set_updated_at
+  before update on public.job_platforms
+  for each row execute function public.set_updated_at();
+
 drop trigger if exists application_tasks_set_updated_at on public.application_tasks;
 create trigger application_tasks_set_updated_at
   before update on public.application_tasks
@@ -184,18 +207,21 @@ grant execute on function private.are_assessments_valid(text[]) to authenticated
 
 alter table public.user_roles enable row level security;
 alter table public.access_requests enable row level security;
+alter table public.job_platforms enable row level security;
 alter table public.applications enable row level security;
 alter table public.application_tasks enable row level security;
 alter table public.application_stages enable row level security;
 
 revoke all on public.user_roles from anon;
 revoke all on public.access_requests from anon;
+revoke all on public.job_platforms from anon;
 revoke all on public.applications from anon;
 revoke all on public.application_tasks from anon;
 revoke all on public.application_stages from anon;
 
 grant select on public.user_roles to authenticated;
 grant select, update on public.access_requests to authenticated;
+grant select, insert, update, delete on public.job_platforms to authenticated;
 grant select, insert, update, delete on public.applications to authenticated;
 grant select, insert, update, delete on public.application_tasks to authenticated;
 grant select, insert, update, delete on public.application_stages to authenticated;
@@ -225,6 +251,14 @@ create policy "Admins update access requests"
   using ((select private.is_admin()))
   with check ((select private.is_admin()));
 
+drop policy if exists "Users manage their own job platforms" on public.job_platforms;
+create policy "Users manage their own job platforms"
+  on public.job_platforms
+  for all
+  to authenticated
+  using ((select auth.uid()) is not null and (select auth.uid()) = user_id)
+  with check ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
 drop policy if exists "Users manage their own applications" on public.applications;
 create policy "Users manage their own applications"
   on public.applications
@@ -237,6 +271,15 @@ create policy "Users manage their own applications"
   with check (
     (select auth.uid()) is not null
     and (select auth.uid()) = user_id
+    and (
+      platform_id is null
+      or exists (
+        select 1
+        from public.job_platforms
+        where job_platforms.id = applications.platform_id
+          and job_platforms.user_id = (select auth.uid())
+      )
+    )
   );
 
 drop policy if exists "Users manage tasks for their own applications" on public.application_tasks;
