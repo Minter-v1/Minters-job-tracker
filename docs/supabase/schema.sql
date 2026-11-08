@@ -68,6 +68,8 @@ create table if not exists public.applications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   company text not null check (char_length(trim(company)) > 0),
+  posting_title text
+    check (posting_title is null or (posting_title = btrim(posting_title) and char_length(posting_title) between 1 and 160)),
   role text not null check (char_length(trim(role)) > 0),
   employment_type text
     check (employment_type in ('정규직', '계약직', '인턴')),
