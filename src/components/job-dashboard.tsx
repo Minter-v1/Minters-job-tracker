@@ -14,8 +14,10 @@ type StageFilter = "전체" | "마감 임박" | "지원 준비" | "전형 진행
 type StateFilter = "전체 상태" | "진행 중" | "최종 합격" | "불합격" | "지원 취소";
 type ViewMode = "목록" | "캘린더";
 type DateSort = "nearest" | "latest";
+type DeadlineDayFilter = number | null;
 const stageFilters: StageFilter[] = ["전체", "마감 임박", "지원 준비", "전형 진행", "면접"];
 const stateFilters: StateFilter[] = ["전체 상태", "진행 중", "최종 합격", "불합격", "지원 취소"];
+const deadlineDayOptions = Array.from({ length: 8 }, (_, day) => day);
 const TERMINAL_STEPS = ["최종 합격", "불합격", "지원 취소"];
 
 function localDate(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
@@ -137,6 +139,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
   const [stageFilter, setStageFilter] = useState<StageFilter>("전체");
   const [stateFilter, setStateFilter] = useState<StateFilter>("전체 상태");
   const [currentStepFilter, setCurrentStepFilter] = useState("전체 단계");
+  const [deadlineDayFilter, setDeadlineDayFilter] = useState<DeadlineDayFilter>(null);
   const [dateSort, setDateSort] = useState<DateSort>("nearest");
   const [viewMode, setViewMode] = useState<ViewMode>("목록");
   const [query, setQuery] = useState("");
@@ -179,6 +182,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     const state = applicationState(job).label;
     if (stateFilter !== "전체 상태" && state !== stateFilter) return false;
     if (currentStepFilter !== "전체 단계" && job.currentStep !== currentStepFilter) return false;
+    if (deadlineDayFilter !== null && (job.currentStep !== "지원 준비" || dayDiff(job.deadline) !== deadlineDayFilter)) return false;
     if (stageFilter === "마감 임박") return job.currentStep === "지원 준비" && dayDiff(job.deadline) >= 0 && dayDiff(job.deadline) <= 3;
     if (stageFilter === "지원 준비") return job.currentStep === "지원 준비";
     if (stageFilter === "전형 진행") return !["지원 준비", ...TERMINAL_STEPS].includes(job.currentStep);
@@ -193,7 +197,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     const aPast = dayDiff(aDate) < 0; const bPast = dayDiff(bDate) < 0;
     if (aPast !== bPast) return aPast ? 1 : -1;
     return aPast ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
-  }), [currentStepFilter, dateSort, jobs, query, stageFilter, stateFilter]);
+  }), [currentStepFilter, dateSort, deadlineDayFilter, jobs, query, stageFilter, stateFilter]);
 
   async function runWrite<T>(work: () => Promise<T>): Promise<T | null> { setPendingWrites((count) => count + 1); setSaveError(""); try { return await work(); } catch { setSaveError("변경사항을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."); return null; } finally { setPendingWrites((count) => Math.max(0, count - 1)); } }
   function persistApplication(id: string, changes: Partial<Job>) { const applicationChanges = { ...changes }; delete applicationChanges.tasks; delete applicationChanges.stages; if (Object.keys(applicationChanges).length) void runWrite(() => updateApplication(createClient(), id, applicationChanges)); }
@@ -275,7 +279,7 @@ export function JobDashboard({ userEmail }: { userEmail: string }) {
     <main className="mx-auto min-w-0 max-w-[1320px] px-5 py-8 sm:px-8 lg:py-10"><div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-bold tracking-[-.035em]">지원 현황</h1><p className="mt-1.5 text-sm text-slate-500">기업별 전형 과정과 일정을 한눈에 관리하세요.</p></div><p className={`text-xs ${saveError ? "text-rose-500" : "text-slate-400"}`}>{saveError || (pendingWrites ? "저장 중..." : "저장됨")}</p></div>
       <section className="mb-5 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4">{[["진행 중", stats.total], ["3일 내 지원 마감", stats.urgent], ["검사 진행", stats.tests], ["면접 단계", stats.interviews]].map(([label, value], index) => <div key={String(label)} className="flex items-baseline gap-2"><p className="text-xs text-slate-500">{label}</p><p className={`text-lg font-bold ${index === 1 && Number(value) ? "text-rose-500" : ""}`}>{value}</p></div>)}</section>
       <ViewToggle value={viewMode} onChange={setViewMode}/>
-      {viewMode === "목록" ? <JobList jobs={jobs} platforms={platforms} visible={visible} stageFilter={stageFilter} setStageFilter={setStageFilter} stateFilter={stateFilter} setStateFilter={setStateFilter} currentStepFilter={currentStepFilter} currentStepFilters={currentStepFilters} setCurrentStepFilter={setCurrentStepFilter} dateSort={dateSort} setDateSort={setDateSort} query={query} setQuery={setQuery} onSelect={setSelectedId} onStepChange={(id, step) => updateJob(id, { currentStep: step })}/> : <CalendarView jobs={jobs} month={calendarMonth} setMonth={setCalendarMonth} onSelect={setSelectedId}/>}
+      {viewMode === "목록" ? <JobList jobs={jobs} platforms={platforms} visible={visible} stageFilter={stageFilter} setStageFilter={setStageFilter} stateFilter={stateFilter} setStateFilter={setStateFilter} currentStepFilter={currentStepFilter} currentStepFilters={currentStepFilters} setCurrentStepFilter={setCurrentStepFilter} deadlineDayFilter={deadlineDayFilter} setDeadlineDayFilter={setDeadlineDayFilter} dateSort={dateSort} setDateSort={setDateSort} query={query} setQuery={setQuery} onSelect={setSelectedId} onStepChange={(id, step) => updateJob(id, { currentStep: step })}/> : <CalendarView jobs={jobs} month={calendarMonth} setMonth={setCalendarMonth} onSelect={setSelectedId}/>}
     </main>
     {isPlatformsOpen && <PlatformManager platforms={platforms} onClose={() => setIsPlatformsOpen(false)} onCreate={addPlatform} onUpdate={editPlatform} onDelete={removePlatform} isSaving={pendingWrites > 0}/>}
     {isAddOpen && <AddModal draft={draft} setDraft={setDraft} platforms={platforms} onClose={() => setIsAddOpen(false)} onSubmit={addJob} isSaving={pendingWrites > 0}/>}
