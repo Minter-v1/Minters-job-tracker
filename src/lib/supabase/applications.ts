@@ -30,6 +30,7 @@ type ApplicationStageRow = {
 type ApplicationRow = {
   id: string;
   company: string;
+  posting_title?: string | null;
   role: string;
   employment_type?: EmploymentType | null;
   platform_id?: string | null;
@@ -51,6 +52,7 @@ type ApplicationChanges = Partial<
   Pick<
     Job,
     | "company"
+    | "postingTitle"
     | "role"
     | "employmentType"
     | "platformId"
@@ -69,6 +71,7 @@ type ApplicationChanges = Partial<
 const applicationColumns = `
   id,
   company,
+  posting_title,
   role,
   employment_type,
   platform_id,
@@ -88,6 +91,7 @@ function toJob(row: ApplicationRow): Job {
   return {
     id: row.id,
     company: row.company,
+    postingTitle: row.posting_title ?? null,
     role: row.role,
     employmentType: row.employment_type ?? null,
     platformId: row.platform_id ?? null,
@@ -132,6 +136,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
       `
         id,
         company,
+        posting_title,
         role,
         employment_type,
         platform_id,
@@ -171,6 +176,49 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
       ascending: true,
     });
 
+  if (error?.code === "42703" && error.message.includes("posting_title")) {
+    const fallback = await supabase
+      .from("applications")
+      .select(
+        `
+          id,
+          company,
+          role,
+          employment_type,
+          platform_id,
+          start_date,
+          start_time,
+          deadline,
+          deadline_time,
+          status,
+          current_step,
+          assessments,
+          link,
+          memo,
+          created_at,
+          application_tasks (
+            id,
+            label,
+            done,
+            position
+          ),
+          application_stages (
+            id,
+            title,
+            scheduled_date,
+            scheduled_time,
+            completed,
+            position
+          )
+        `,
+      )
+      .order("deadline", { ascending: true })
+      .order("position", { referencedTable: "application_tasks", ascending: true })
+      .order("position", { referencedTable: "application_stages", ascending: true });
+    data = fallback.data?.map((row) => ({ ...row, posting_title: null })) ?? null;
+    error = fallback.error;
+  }
+
   if (error?.code === "42703" && error.message.includes("platform_id")) {
     const fallback = await supabase
       .from("applications")
@@ -209,7 +257,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
       .order("deadline", { ascending: true })
       .order("position", { referencedTable: "application_tasks", ascending: true })
       .order("position", { referencedTable: "application_stages", ascending: true });
-    data = fallback.data?.map((row) => ({ ...row, platform_id: null })) ?? null;
+    data = fallback.data?.map((row) => ({ ...row, posting_title: null, platform_id: null })) ?? null;
     error = fallback.error;
   }
 
@@ -250,7 +298,7 @@ export async function loadApplications(supabase: SupabaseClient): Promise<Job[]>
       .order("deadline", { ascending: true })
       .order("position", { referencedTable: "application_tasks", ascending: true })
       .order("position", { referencedTable: "application_stages", ascending: true });
-    data = fallback.data?.map((row) => ({ ...row, employment_type: null, platform_id: null })) ?? null;
+    data = fallback.data?.map((row) => ({ ...row, posting_title: null, employment_type: null, platform_id: null })) ?? null;
     error = fallback.error;
   }
 
@@ -267,6 +315,7 @@ export async function createApplication(
 ): Promise<Job> {
   const payload: Record<string, unknown> = {
     company: draft.company,
+    posting_title: draft.postingTitle?.trim() || null,
     role: draft.role,
     employment_type: draft.employmentType,
     start_date: draft.startDate || null,
@@ -306,6 +355,7 @@ export async function updateApplication(
   const payload: Record<string, unknown> = {};
 
   if (changes.company !== undefined) payload.company = changes.company;
+  if (changes.postingTitle !== undefined) payload.posting_title = changes.postingTitle?.trim() || null;
   if (changes.role !== undefined) payload.role = changes.role;
   if (changes.employmentType !== undefined) payload.employment_type = changes.employmentType;
   if (changes.platformId !== undefined) payload.platform_id = changes.platformId;
